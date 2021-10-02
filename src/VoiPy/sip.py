@@ -1,8 +1,8 @@
 import hashlib
 from random import random
 from scapy.all import *
-# import VoiPy
-import VoiPy.src.VoiPy as ccVoIP
+import VoiPy
+# import VoiPy.src.VoiPy as ccVoIP
 from . import sip_template, sip_receive, sip_methods, helper, rtp, sip_message
 from .types import *
 
