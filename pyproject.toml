@@ -1,0 +1,8 @@
+[build-system]
+requires = [
+    "scapy>=2.4.5",
+    "requests>=2.26.0",
+    "setuptools>=42",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
