@@ -12,6 +12,7 @@
 #
 import os
 import sys
+import sphinx_pdj_theme
 sys.path.insert(0, os.path.abspath('../../src'))
 sys.setrecursionlimit(1500)
 
@@ -33,7 +34,9 @@ release = '1.1'
 extensions = [
     'sphinx.ext.duration',
     'sphinx.ext.autodoc',
-    'rinoh.frontend.sphinx'
+    'rinoh.frontend.sphinx',
+    "sphinx.ext.napoleon",
+    "sphinx_autodoc_typehints",
 
 ]
 
@@ -57,14 +60,17 @@ language = 'En'
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = []
+exclude_patterns = ['build', 'Thumbs.db', '.DS_Store', '.venv']
 
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+
+html_theme = 'sphinx_rtd_theme'
+# html_theme = 'sphinx_pdj_theme'
+# html_theme_path = [sphinx_pdj_theme.get_html_theme_path()]
 
 # EPUB options
 epub_show_urls = 'footnote'
