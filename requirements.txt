@@ -5,3 +5,6 @@ pypiwin32==223
 pywin32==301
 pywin32-ctypes==0.2.0
 SoundFile==0.10.3.post1
+
+livereload~=2.6.3
+setuptools~=58.2.0

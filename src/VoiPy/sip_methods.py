@@ -133,7 +133,7 @@ class SipRegister(Method):
 
 class SipDeregister(Method):
     def __init__(self, parent):
-        self.sip: Sip = parent
+        self.sip: sip.Sip = parent
         self.name: str = "DEREGISTER"
         self.register_counter = self.sip.register_counter
         self.send = self.sip.send
@@ -227,7 +227,7 @@ class SipDeregister(Method):
 
 class SipSubscribe(Method):
     def __init__(self, parent):
-        self.sip: Sip = parent
+        self.sip: sip.Sip = parent
         self.name: str = "SUBSCRIBE"
         self.subscribe_counter = self.sip.subscribe_counter
         self.send = self.sip.send
@@ -315,7 +315,7 @@ class SipSubscribe(Method):
 
 class SipInvite(Method):
     def __init__(self, parent):
-        self.sip: Sip = parent
+        self.sip: sip.Sip = parent
         self.name: str = "INVITE"
         self.number: str = ''
         self.medias: dict = {}
@@ -438,7 +438,7 @@ class SipInvite(Method):
 
 class SipTransfer(Method):
     def __init__(self, parent):
-        self.sip: Sip = parent
+        self.sip: sip.Sip = parent
         self.name: str = "TRANSFER"
         self.number: str = ''
         self.medias: dict = {}

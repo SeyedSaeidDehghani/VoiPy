@@ -180,7 +180,6 @@ class RTPClient:
         self.out_SSRC = random.randint(1000, 65530)
 
     def start(self):
-        # print("start rtp")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind((self.in_ip, self.in_port))
         self.socket.setblocking(False)

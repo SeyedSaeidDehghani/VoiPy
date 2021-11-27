@@ -110,6 +110,8 @@ class Phone:
             if call_id not in self.calls:
                 return
             self.call_back(608, call_id=call_id)
+        elif method == "CANCEL":
+            self.call_back(607, call_id=call_id)
             # self.calls[call_id].bye()
         elif method == "486":
             self.call_back(status_code=486, call_id=call_id)

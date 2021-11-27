@@ -313,7 +313,10 @@ class Sip:
             medias: dict,
             send_type: str
     ) -> None:
-        answer_request = self.request_creator.gen_answer(request=request, session_id=session_id, medias=medias,
+        tag = self.tag_library[request.headers["Call-ID"]]
+        answer_request = self.request_creator.gen_answer(request=request,
+                                                         tag=tag, medias=medias,
+                                                         session_id=session_id,
                                                          send_type=send_type)
         self.send(answer_request)
 
@@ -556,6 +559,7 @@ class RequestCreator:
     def gen_answer(
             self,
             request: sip_message.SipParseMessage,
+            tag: str,
             session_id: int,
             medias: dict,
             send_type: str
@@ -583,7 +587,7 @@ class RequestCreator:
         body += f"a=x-rtp-session-id:{session_id}\r\n"
 
         data = {"#from-tag#": request.headers['From']['tag'],
-                "#to-tag#": request.headers['To']['tag'],
+                "#to-tag#": tag,
                 "#from-raw#": request.headers['From']['raw'],
                 "#to-raw#": request.headers['To']['raw'],
                 "#call_id_counter#": request.headers['Call-ID'],
@@ -656,7 +660,8 @@ class RequestCreator:
                 "#number#": request.headers["To"]["number"],
                 "#call_id_counter#": request.headers['Call-ID'],
                 "#header#": request.headers['Contact'].strip('<').strip('>'),
-                "#branch#": request.headers['Via']['branch']}
+                "#branch#": request.headers['Via']['branch']
+                }
 
         if request.headers['From']['tag'] == tag:
             data["#from-raw#"] = request.headers['From']['raw']
