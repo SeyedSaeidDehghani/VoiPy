@@ -298,26 +298,26 @@ ok_bye = ["SIP/2.0 200 OK\r\n",
           "Content-Length: 0\r\n\r\n"]
 
 cancel_auth = ["CANCEL sip:#number#@#server_ip# SIP/2.0\r\n",
-            "Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;rport\r\n",
-            "Max-Forwards: 70\r\n",
-            "Contact: <sip:#username#@#client_ip#:#client_port#>\r\n",
-            "To: \"#number#\"<sip:#number#@#server_ip#>\r\n",
-            "From: \"#username#\" <sip:#username#@#client_ip#>;tag=#from-tag#\r\n",
-            "Call-ID: #call_id_counter#\r\nCSeq: #cseq_id# CANCEL\r\n",
-            "User-Agent: VoiPy #user_version#\r\n",
-            "Authorization: Digest username=\"#username#\",realm=\"asterisk\",nonce=\"#nonce#\","
-            "uri=\"sip:#number#@#server_ip#\",response=\"#response#\",algorithm=MD5.\r\n",
-            "Content-Length: 0\r\n\r\n"]
+               "Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;rport\r\n",
+               "Max-Forwards: 70\r\n",
+               "Contact: <sip:#username#@#client_ip#:#client_port#>\r\n",
+               "To: \"#number#\"<sip:#number#@#server_ip#>\r\n",
+               "From: \"#username#\" <sip:#username#@#client_ip#>;tag=#from-tag#\r\n",
+               "Call-ID: #call_id_counter#\r\nCSeq: #cseq_id# CANCEL\r\n",
+               "User-Agent: VoiPy #user_version#\r\n",
+               "Authorization: Digest username=\"#username#\",realm=\"asterisk\",nonce=\"#nonce#\","
+               "uri=\"sip:#number#@#server_ip#\",response=\"#response#\",algorithm=MD5.\r\n",
+               "Content-Length: 0\r\n\r\n"]
 
 cancel = ["CANCEL sip:#number#@#server_ip# SIP/2.0\r\n",
-            "Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;rport\r\n",
-            "Max-Forwards: 70\r\n",
-            "Contact: <sip:#username#@#client_ip#:#client_port#>\r\n",
-            "To: \"#number#\"<sip:#number#@#server_ip#>\r\n",
-            "From: \"#username#\" <sip:#username#@#client_ip#>;tag=#from-tag#\r\n",
-            "Call-ID: #call_id_counter#\r\nCSeq: #cseq_id# CANCEL\r\n",
-            "User-Agent: VoiPy #user_version#\r\n",
-            "Content-Length: 0\r\n\r\n"]
+          "Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;rport\r\n",
+          "Max-Forwards: 70\r\n",
+          "Contact: <sip:#username#@#client_ip#:#client_port#>\r\n",
+          "To: \"#number#\"<sip:#number#@#server_ip#>\r\n",
+          "From: \"#username#\" <sip:#username#@#client_ip#>;tag=#from-tag#\r\n",
+          "Call-ID: #call_id_counter#\r\nCSeq: #cseq_id# CANCEL\r\n",
+          "User-Agent: VoiPy #user_version#\r\n",
+          "Content-Length: 0\r\n\r\n"]
 
 options = ["#method# sip:#username#@#server_ip# SIP/2.0\r\n",
            'Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;rport\r\n',

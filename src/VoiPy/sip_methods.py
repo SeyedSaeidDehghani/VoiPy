@@ -223,8 +223,6 @@ class SipDeregister(Method):
         self.send(request)
 
 
-
-
 class SipSubscribe(Method):
     def __init__(self, parent):
         self.sip: sip.Sip = parent
@@ -337,13 +335,16 @@ class SipInvite(Method):
             medias: dict,
             send_type: rtp.TransmitType
     ) -> tuple or bool:
+        self.sip.invite_method_external_state = 0
         self.number = number
         self.medias = medias
         self.send_type = send_type
         self.__invite()
         i = 0
-        while self._state != 4:
+        while self._state < 3:
             i += 1
+            # if self._state == 3:
+            #     return sip_message.SipParseMessage(helper.list_to_string(self.request)), self.call_id, self.session_id, self.auth_info
             if i > 20:
                 if self._state == 3:
                     debug(s=f"self.auth_info {self.auth_info}")
@@ -374,11 +375,13 @@ class SipInvite(Method):
             elif response.status == SipStatus(100):
                 if self._state == 1 or self._state == 2:
                     self._state = 3
+                    self.sip.invite_method_external_state = 3
                     self.external_state = 3
                     debug("Trying...")
             elif response.status == SipStatus(180):
                 if self._state == 3:
                     self._state = 4
+                    self.sip.invite_method_external_state = 4
                     self.external_state = 4
                     debug(f"{self.number} is Ringing.")
 
@@ -424,6 +427,7 @@ class SipInvite(Method):
         nonce = helper.quote(response.authentication['nonce'])
         self.auth_info = {"response": response_hash,
                           "nonce": nonce}
+        self.sip.invite_auth_info = self.auth_info
         tag = self.sip.gen_tag()
         self.sip.tag_library[self.call_id] = tag
         self.cseq_id = self.invite_counter.next()
@@ -515,8 +519,11 @@ class SipTransfer(Method):
                 if self._state == 3 or self._state == 4:
                     data = self.sip.request_creator.gen_ack(response=response)
                     self.sip.send(data)
-                    self._state = 4
-                    self.__refer()
+                    if self._state == 3:
+                        self._state = 4
+                        refer_timer = threading.Timer(5, self.__refer)
+                        refer_timer.name = "refer"
+                        refer_timer.start()
 
             elif response.status == SipStatus(202) and response.headers["CSeq"]["method"] == "REFER":
                 if self._state == 5:
@@ -542,17 +549,20 @@ class SipTransfer(Method):
             nonce: str = None
     ) -> None:
         self._state = 1
-        debug(f"Try Call to {self.number}...")
+        debug(f"Try Call to {self.refer_to}...")
         self.branch = "z9hG4bK" + self.sip.gen_callId()[0:25]
         self.cseq_id = self.refer_counter.next()
         self.session_id = self.sip.session_id.get()
-        response_hash = self.sip.create_hash(nonce=nonce,
-                                             method="REFER_INVITE",
-                                             call_to=self.number)
-        nonce = helper.quote(nonce)
-        self.auth_info = {"response": response_hash,
-                          "nonce": nonce}
-        self.request = self.sip.request_creator.gen_invite(number=self.number, cseq_id=self.cseq_id,
+        if nonce:
+            response_hash = self.sip.create_hash(nonce=nonce,
+                                                 method="REFER_INVITE",
+                                                 call_to=self.refer_to)
+            nonce = helper.quote(nonce)
+            self.auth_info = {"response": response_hash,
+                              "nonce": nonce}
+        else:
+            response_hash = None
+        self.request = self.sip.request_creator.gen_invite(number=self.refer_to, cseq_id=self.cseq_id,
                                                            session_id=self.session_id,
                                                            medias=self.medias, send_type=self.send_type,
                                                            branch=self.branch,
@@ -562,12 +572,15 @@ class SipTransfer(Method):
         self.sip.send(self.request)
 
     def __refer(self) -> None:
-        sleep(5)
+        # sleep(5)
         self._state = 5
         debug(f"Refer to {self.number}...")
-        response_hash = self.sip.create_hash(nonce=self.auth_info["nonce"],
-                                             method="REFER", call_to=self.number)
-        nonce = helper.quote(self.auth_info["nonce"])
+        nonce = None
+        response_hash = None
+        if self.auth_info:
+            response_hash = self.sip.create_hash(nonce=self.auth_info["nonce"],
+                                                 method="REFER", call_to=self.refer_to)
+            nonce = helper.quote(self.auth_info["nonce"])
         self.branch = "z9hG4bK" + self.sip.gen_callId()[0:25]
         self.cseq_id = self.refer_counter.next()
 
@@ -582,7 +595,7 @@ class SipTransfer(Method):
     def __bye(self):
         self._state = 8
         request = sip_message.SipParseMessage(helper.list_to_string(self.request))
-        self.sip.bye(request)
+        self.sip.bye(request, cseq_id=self.cseq_id + 2)
 
     # def __authorize(
     #         self,
@@ -633,7 +646,6 @@ class SipMessage(Method):
             if i == 20:
                 return False
             sleep(0.3)
-            print("sip_methods - SipMessage - run - while")
         return self.call_id, self.auth_info
 
     def update_response(

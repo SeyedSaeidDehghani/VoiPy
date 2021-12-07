@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name='VoiPy',
-    version='1.0.9',
+    version='1.1.0',
     description='Voip package',
     author='Seyed Saeid Dehghani',
     author_email="s.saeid.dehghani@gmail.com",

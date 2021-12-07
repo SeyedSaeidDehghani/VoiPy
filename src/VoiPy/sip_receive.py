@@ -58,7 +58,8 @@ class ConcreteReceive(ObserverPattern, Thread):
             observer: Method
     ) -> None:
         debug(f"Receive: Detach an observer: {observer.name}")
-        self._methods.remove(observer)
+        if observer in self._methods:
+            self._methods.remove(observer)
 
     def notify(
             self,

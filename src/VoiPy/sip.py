@@ -52,6 +52,7 @@ class Sip:
         self.deregister_method = sip_methods.SipDeregister(self)
         self.subscribe_method = sip_methods.SipSubscribe(self)
         self.invite_method = None
+        self.invite_method_external_state = 0
         self.invite_auth_info: dict = {}
 
     def start(self) -> tuple or bool:
@@ -115,9 +116,9 @@ class Sip:
             self.on_call(response, method="OK")
         elif response.status == SipStatus(486):
             self.on_call(response, method="486")
-            self.ack(response)
+            self.ack(response=response)
         elif response.status == SipStatus(487):
-            self.ack(response)
+            self.ack(response=response)
         elif response.status == SipStatus(503) and \
                 response.headers["CSeq"]["method"] == "INVITE" and \
                 hasattr(self.invite_method, "external_state"):
@@ -126,6 +127,10 @@ class Sip:
             elif self.invite_method.external_state == 4:
                 self.on_call(response, method="408")
             self.ack(response)
+        elif response.status == SipStatus(180):
+            self.on_call(response, method="180")
+        elif response.status == SipStatus(100):
+            self.on_call(response, method="100")
 
     def connect(self) -> tuple or bool:
         """
@@ -187,10 +192,11 @@ class Sip:
         result = self.invite_method.run(number=number, medias=medias, send_type=send_type)
         self.response.detach(self.invite_method)
         while result is None:
-            print("sip - invite - while")
+            pass
         if isinstance(result, tuple):
             if len(result) == 4:
                 _, _, _, self.invite_auth_info = result
+
             elif len(result) == 3:
                 _, _, self.invite_auth_info = result
         elif self.invite_method.external_state == 3:
@@ -243,6 +249,8 @@ class Sip:
         self.tag_library[request.headers["Call-ID"]] = tag
         request = self.request_creator.ringing_or_busy(request=request, tag=tag)
         self.send(request)
+        result = helper.list_to_string(request)
+        self.on_call(sip_message.SipParseMessage(result), method="180_1")
         debug("Ringing 180!")
 
     def terminated_487(
@@ -292,6 +300,8 @@ class Sip:
         self.transfer_method = sip_methods.SipTransfer(parent=self)
         self.response.attach(self.transfer_method)
         result = None
+        if tag_to == '':
+            tag_to = self.tag_library[call_id]
         result = self.transfer_method.run(number=number,
                                           refer_to=refer_to,
                                           call_id=call_id,
@@ -337,7 +347,8 @@ class Sip:
 
     def bye(
             self,
-            request: sip_message.SipParseMessage
+            request: sip_message.SipParseMessage,
+            cseq_id: int = None
     ) -> None:
         debug(s=request.summary())
         tag = self.tag_library[request.headers['Call-ID']]
@@ -347,10 +358,12 @@ class Sip:
             response_hash = self.create_hash(nonce=helper.quote(request.authentication['nonce']),
                                              method="BYE", call_to=request.headers["To"]["number"])
             bye_request = self.request_creator.gen_bye(request=request, tag=tag,
+                                                       cseq_id=cseq_id,
                                                        response=response_hash,
                                                        nonce=request.authentication['nonce'])
         else:
             bye_request = self.request_creator.gen_bye(request=request,
+                                                       cseq_id=cseq_id,
                                                        tag=tag)
         self.send(bye_request)
 
@@ -358,8 +371,6 @@ class Sip:
             self,
             response: sip_message.SipParseMessage
     ) -> None:
-        while "response" not in self.invite_auth_info:
-            print("sip - ack_auth - while")
         request = self.request_creator.gen_ack(response=response,
                                                auth_info=self.invite_auth_info)
         self.send(request)
@@ -638,10 +649,10 @@ class RequestCreator:
                 "#number#": response.headers['To']["number"],
                 "#to-raw#": response.headers['To']['raw'],
                 "#from-raw#": response.headers['From']['raw'],
-                "#call_id_counter#": response.headers['Call-ID'].split("@")[0],
+                "#call_id_counter#": response.headers['Call-ID'],
                 "#cseq_id#": response.headers['CSeq']['check'],
                 "#branch#": response.headers['Via']['branch']}
-        if auth_info is None:
+        if not auth_info:
             data = self.fill_request(sip_template.ack, data=data)
         else:
             data["#response#"] = auth_info["response"]
@@ -652,7 +663,7 @@ class RequestCreator:
     def gen_bye(
             self,
             request: sip_message.SipParseMessage,
-            tag: str,
+            tag: str, cseq_id: int = None,
             response: Optional[str] = None,
             nonce: Optional[str] = None
     ) -> list:
@@ -672,7 +683,10 @@ class RequestCreator:
             data["#to-raw#"] = request.headers['From']['raw']
             data["#to-tag#"] = request.headers['From']['tag']
         if response is None:
-            data["#cseq_id#"] = 2
+            if cseq_id:
+                data["#cseq_id#"] = cseq_id
+            else:
+                data["#cseq_id#"] = 2
             result = self.fill_request(sip_template.bye, data=data)
         else:
             data["#nonce#"] = nonce
@@ -687,12 +701,10 @@ class RequestCreator:
             response: Optional[str] = None,
             nonce: Optional[str] = None
     ) -> list:
-        data = {"#from-tag#": request.headers["From"]["tag"],
-                "#number#": request.headers["To"]["number"],
+        data = {"#from-tag#": request.headers["From"]["tag"], "#number#": request.headers["To"]["number"],
                 "#call_id_counter#": request.headers['Call-ID'],
                 "#header#": request.headers['Contact'].strip('<').strip('>'),
-                "#branch#": request.headers['Via']['branch']}
-        data["#cseq_id#"] = (int(request.headers['CSeq']['check']))
+                "#branch#": request.headers['Via']['branch'], "#cseq_id#": (int(request.headers['CSeq']['check']))}
         if response is None:
             result = self.fill_request(sip_template.cancel, data=data)
         else:
