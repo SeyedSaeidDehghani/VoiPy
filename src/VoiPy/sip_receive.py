@@ -51,7 +51,8 @@ class ConcreteReceive(ObserverPattern, Thread):
             observer: Method
     ) -> None:
         debug(f"Receive: Attached an observer: {observer.name}")
-        self._methods.append(observer)
+        if observer not in self._methods:
+            self._methods.append(observer)
 
     def detach(
             self,

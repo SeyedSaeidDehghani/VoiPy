@@ -1,8 +1,11 @@
 import hashlib
 from random import random
+from threading import Timer
+from time import sleep
+
+from VoiPy.sip_message import SipParseMessage
 from scapy.all import *
 import VoiPy
-# import VoiPy.src.VoiPy as ccVoIP
 from . import sip_template, sip_receive, sip_methods, helper, rtp, sip_message
 from .types import *
 
@@ -16,11 +19,13 @@ packet_counts = helper.Counter()
 # noinspection PyBroadException
 class Sip:
     def __init__(self, username: str, password: str = None, server_ip: str = "172.20.165.0", server_port: int = 5060,
-                 DnD: bool = False, on_call=None):
+                 DnD: bool = False, on_call=None, sip_status=None):
         self.on_call = on_call
+        self.sip_status = sip_status
         self.DnD = DnD
         self.socket = socket.socket(family=socket.AF_INET,
                                     type=socket.SOCK_DGRAM)
+        self.socket.settimeout(3)
         self.response_hash = ""
         self.nonce = ""
         self.time_ex = 3600
@@ -35,7 +40,7 @@ class Sip:
         self.tag_library = {}
 
         self.call_id_counter = helper.Counter()
-        self.invite_counter = helper.Counter()
+        self.invite_counter: dict[str, helper.Counter()] = {}
         self.register_counter = helper.Counter()
         self.subscribe_counter = helper.Counter()
         self.message_counter = helper.Counter()
@@ -54,6 +59,10 @@ class Sip:
         self.invite_method = None
         self.invite_method_external_state = 0
         self.invite_auth_info: dict = {}
+        self.sip_alive_timer: Timer = Timer(125, self.sip_status_timer, [])
+        self.sip_alive_timer.name = "sip_alive_timer"
+        self.sip_option_time = time.time()
+        self.option_counter = 0
 
     def start(self) -> tuple or bool:
         connect = self.connect()
@@ -62,6 +71,9 @@ class Sip:
             self.response.start()
             register = self.register_method.run()
             if register:
+                self.sip_status(True)
+                if not self.sip_alive_timer.is_alive():
+                    self.sip_alive_timer.start()
                 auth_info = register[1]
                 self.response_hash = auth_info["response"]
                 self.nonce = auth_info["nonce"]
@@ -70,19 +82,29 @@ class Sip:
                 return connect
         return False
 
+    def hook(self):
+        data = bytes.fromhex('0d0a0d0a')
+        self.socket.sendto(data, (self.server_ip, self.server_port))
+
     def stop(self) -> None:
         if hasattr(self.register_thread, "is_alive"):
             if self.register_thread.is_alive():
                 self.register_thread.cancel()
-        self.deregister()
+                self.sip_alive_timer.cancel()
+        self.detach_register()
+        result = self.deregister()
+        self.sip_status(False)
         self.response.phone = "stop"
         self.response.i_loop = False
-        time.sleep(2)
         if hasattr(self.receive_thread, "is_alive"):
             if self.receive_thread.is_alive():
                 self.receive_thread.cancel()
         time.sleep(2)
         self.socket.close()
+        return result
+
+    def sip_status_timer(self):
+        self.sip_status(False)
 
     def return_callBack(
             self,
@@ -96,41 +118,67 @@ class Sip:
                     if self.DnD:
                         self.busy(response)
                         self.terminated_487(response)
-                        self.on_call(response, response.method)
+                        self.on_call(response)
                     else:
                         self.ringing_180(response)
-                        self.on_call(response, response.method)
+                        response.status = SipStatus.INVITE_CALL
+                        self.on_call(response)
             elif response.method == "BYE" or response.method == "CANCEL":
-                self.on_call(response, response.method)
+
                 request = self.request_creator.gen_ok_bye(response)
                 self.send(request)
                 if response.method == "CANCEL":
                     self.terminated_487(response)
+                    response.status = SipStatus.DECLINE
+                    self.on_call(response)
+                else:
+                    response.status = SipStatus.END_CALL
+                    self.on_call(response)
             elif response.method == "ACK":
                 pass
             elif response.method == "OPTIONS" or response.method == "NOTIFY":
                 request = self.request_creator.gen_ok(request=response)
-                self.send(request)
-        elif response.status == SipStatus(200) and response.headers["CSeq"]["method"] == "INVITE":
+                result = self.send(request)
+                if response.method == "OPTIONS":
+                    temp_time = time.time() - self.sip_option_time
+                    self.sip_option_time = time.time()
+                    # print("self.option_counter_a", self.option_counter, temp_time)
+                    if 0 < temp_time < 15:
+                        self.option_counter += 1
+                        # print("self.option_counter_b", self.option_counter)
+                        if self.option_counter > 4:
+                            self.sip_status_timer()
+                    elif temp_time == 0:
+                        pass
+                    else:
+                        self.option_counter = 0
+                        self.sip_alive_timer.cancel()
+                        self.sip_alive_timer: Timer = Timer(125, self.sip_status_timer)
+                        self.sip_alive_timer.name = "sip_alive_timer"
+                        self.sip_alive_timer.start()
+
+        elif response.status == SipStatus.OK and response.headers["CSeq"]["method"] == "INVITE":
+            self.on_call(response)
             self.ack(response=response)
-            self.on_call(response, method="OK")
-        elif response.status == SipStatus(486):
-            self.on_call(response, method="486")
+        elif response.status == SipStatus.BUSY_HERE:
+            self.on_call(response)
             self.ack(response=response)
-        elif response.status == SipStatus(487):
+        elif response.status == SipStatus.REQUEST_TERMINATED:
             self.ack(response=response)
-        elif response.status == SipStatus(503) and \
+        elif response.status == SipStatus.SERVICE_UNAVAILABLE and \
                 response.headers["CSeq"]["method"] == "INVITE" and \
                 hasattr(self.invite_method, "external_state"):
-            if self.invite_method.external_state == 3:
-                self.on_call(response, method="404")
-            elif self.invite_method.external_state == 4:
-                self.on_call(response, method="408")
             self.ack(response)
-        elif response.status == SipStatus(180):
-            self.on_call(response, method="180")
-        elif response.status == SipStatus(100):
-            self.on_call(response, method="100")
+            if self.invite_method.external_state == 3:
+                response.status = SipStatus.NOT_FOUND
+                self.on_call(response)
+            elif self.invite_method.external_state == 4:
+                response.status = SipStatus.TEMPORARILY_UNAVAILABLE
+                self.on_call(response)
+        elif response.status == SipStatus.RINGING:
+            self.on_call(response)
+        elif response.status == SipStatus.TRYING:
+            self.on_call(response)
 
     def connect(self) -> tuple or bool:
         """
@@ -171,7 +219,7 @@ class Sip:
             request = sip_message.SipParseMessage(data)
             debug(f"---------->>\n{request.summary()}")
             return True
-        except Exception as e:
+        except:
             return False
 
     def attach_register(self) -> None:
@@ -193,12 +241,15 @@ class Sip:
         self.response.detach(self.invite_method)
         while result is None:
             pass
+        call_id = None
+        invite_auth_info = None
         if isinstance(result, tuple):
             if len(result) == 4:
-                _, _, _, self.invite_auth_info = result
+                _, call_id, _, invite_auth_info = result
 
             elif len(result) == 3:
-                _, _, self.invite_auth_info = result
+                _, call_id, invite_auth_info = result
+            self.invite_auth_info[call_id] = invite_auth_info
         elif self.invite_method.external_state == 3:
             if result == 404:
                 debug("Number is wrong!")
@@ -250,7 +301,9 @@ class Sip:
         request = self.request_creator.ringing_or_busy(request=request, tag=tag)
         self.send(request)
         result = helper.list_to_string(request)
-        self.on_call(sip_message.SipParseMessage(result), method="180_1")
+        result = sip_message.SipParseMessage(result)
+        result.status = SipStatus.RINGING_ME
+        self.on_call(result)
         debug("Ringing 180!")
 
     def terminated_487(
@@ -276,7 +329,8 @@ class Sip:
             self.response.attach(self.deregister_method)
             result = self.deregister_method.run(response_hash=self.response_hash, nonce=self.nonce)
             self.response.detach(self.deregister_method)
-
+            if not result:
+                return False
             self.response.attach(self.subscribe_method)
             result = self.subscribe_method.run()
             self.response.detach(self.subscribe_method)
@@ -284,7 +338,48 @@ class Sip:
             return result
 
         except Exception:
+            self.response.detach(self.deregister_method)
+            self.response.detach(self.subscribe_method)
             return False
+
+    def hold(
+            self,
+            number: str,
+            call_to: str,
+            call_id: str,
+            medias: dict,
+            tag_to: str,
+            tag_from: str,
+            is_hold: bool,
+            send_type: rtp.TransmitType,
+            nonce: Optional[str] = None
+    ) -> None:
+        self.hold_method = sip_methods.SipHold(parent=self)
+        self.response.attach(self.hold_method)
+        result: sip_message.SipParseMessage = None
+        if tag_to == '':
+            tag_to = self.tag_library[call_id]
+        result = self.hold_method.run(number=number,
+                                      call_to=call_to,
+                                      call_id=call_id,
+                                      medias=medias,
+                                      send_type=send_type,
+                                      tag_to=tag_to,
+                                      tag_from=tag_from,
+                                      is_hold=is_hold,
+                                      nonce=nonce)
+        self.response.detach(self.hold_method)
+        if result:
+            response, auth_info = result
+            response = helper.list_to_string(response)
+            response = sip_message.SipParseMessage(response)
+            self.invite_auth_info[response.headers['Call-ID']] = auth_info
+            if not is_hold:
+                response.status = SipStatus.HOLD_CALL
+            else:
+                response.status = SipStatus.ONLINE_HOLD_CALL
+            self.on_call(response)
+            return response
 
     def transfer(
             self,
@@ -295,6 +390,7 @@ class Sip:
             tag_to: str,
             tag_from: str,
             send_type: rtp.TransmitType,
+            call_replaces: SipParseMessage = None,
             nonce: Optional[str] = None
     ) -> None:
         self.transfer_method = sip_methods.SipTransfer(parent=self)
@@ -303,6 +399,7 @@ class Sip:
         if tag_to == '':
             tag_to = self.tag_library[call_id]
         result = self.transfer_method.run(number=number,
+                                          call_replaces=call_replaces,
                                           refer_to=refer_to,
                                           call_id=call_id,
                                           medias=medias,
@@ -312,9 +409,13 @@ class Sip:
                                           nonce=nonce)
         self.response.detach(self.transfer_method)
         if result:
-            self.on_call(result, method="202")
-        else:
-            self.on_call(result, method="502")
+            result, auth_info, call_id = result
+            self.invite_auth_info[call_id] = auth_info
+            result.status = SipStatus.TRANSFER_ACCEPTED
+            self.on_call(result)
+        # else:
+        #     result.status = SipStatus.TRANSFER_DECLINED
+        #     self.on_call(result)
 
     def answer(
             self,
@@ -371,8 +472,15 @@ class Sip:
             self,
             response: sip_message.SipParseMessage
     ) -> None:
+        invite_auth_info = None
+        i = 0
+        while i < 20 and invite_auth_info is None:
+            if response.headers['Call-ID'] in self.invite_auth_info:
+                invite_auth_info = self.invite_auth_info[response.headers['Call-ID']]
+            sleep(0.2)
+            i += 1
         request = self.request_creator.gen_ack(response=response,
-                                               auth_info=self.invite_auth_info)
+                                               auth_info=invite_auth_info)
         self.send(request)
         debug("ACK Send...")
 
@@ -514,16 +622,20 @@ class RequestCreator:
             send_type: rtp.TransmitType,
             response: Optional[str] = None,
             nonce: Optional[str] = None,
-            tag_to: Optional[str] = None
+            tag_to: Optional[str] = None,
+            is_client_ip: bool = False
     ) -> list:
         body = "v=0\r\n"
 
         if tag_to is not None:
-            body += f"o=CCVoIP {session_id} {str(int(session_id) + 3)} IN IP4 {self.meta_data['client_ip']}\r\n"
+            body += f"o=CCVoIP {session_id} {str(int(cseq_id))} IN IP4 {self.meta_data['client_ip']}\r\n"
             body += f"s=CCVoIP {VoiPy.__version__}\r\n"
-            body += f"c=IN IP4 0.0.0.0\r\n"
+            if is_client_ip:
+                body += f"c=IN IP4 {self.meta_data['client_ip']}\r\n"
+            else:
+                body += f"c=IN IP4 0.0.0.0\r\n"
         else:
-            body += f"o=CCVoIP {session_id} {str(int(session_id) + 2)} IN IP4 {self.meta_data['client_ip']}\r\n"
+            body += f"o=CCVoIP {session_id} {str(int(cseq_id))} IN IP4 {self.meta_data['client_ip']}\r\n"
             body += f"s=CCVoIP {VoiPy.__version__}\r\n"
             body += f"c=IN IP4 {self.meta_data['client_ip']}\r\n"
         body += "t=0 0\r\n"
@@ -539,8 +651,8 @@ class RequestCreator:
                 if str(medias[x][media]) == "telephone-event":
                     body += f"a=fmtp:{str(media)} 0-15\r\n"
 
-        body += "a=ptime:50\r\n"
-        body += "a=maxptime:150\r\n"
+        body += "a=ptime:20\r\n"
+        body += "a=maxptime:50\r\n"
         body += f"a={send_type}\r\n"
 
         data = {"#call_id_counter#": call_id,
@@ -619,7 +731,8 @@ class RequestCreator:
             cseq_id: int,
             branch: str,
             tag_from: str,
-            tag_to: Optional[str] = None,
+            tag_to: str,
+            call_replace: SipParseMessage = None,
             response: Optional[str] = None,
             nonce: Optional[str] = None,
     ) -> list:
@@ -629,7 +742,10 @@ class RequestCreator:
                 "#cseq_id#": cseq_id,
                 "#branch#": branch,
                 "#number#": number,
-                "#refer_number#": refer_to}
+                "#refer_number#": refer_to,
+                "#replaces#": ''}
+        if call_replace is not None:
+            data["#replaces#"] = call_replace
         if response is not None:
             data["#response#"] = response
             data["#nonce#"] = nonce

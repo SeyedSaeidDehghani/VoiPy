@@ -51,13 +51,13 @@ class PayloadType(Enum):
         return str(self.value)
 
     # Audio
-    PCMU = 0, 8000, 1, "PCMU"
+    PCMU = 0, 8000, 2, "PCMU"
     GSM = 3, 8000, 1, "GSM"
     G723 = 4, 8000, 1, "G723"
     DVI4_8000 = 5, 8000, 1, "DVI4"
     DVI4_16000 = 6, 16000, 1, "DVI4"
     LPC = 7, 8000, 1, "LPC"
-    PCMA = 8, 8000, 1, "PCMA"
+    PCMA = 8, 8000, 2, "PCMA"
     G722 = 9, 8000, 1, "G722"
     L16_2 = 10, 44100, 2, "L16"
     L16 = 11, 44100, 1, "L16"
@@ -218,6 +218,15 @@ class SipStatus(IntEnum):
     GLOBAL_NOT_ACCEPTABLE = 606, 'Not Acceptable'
     UNWANTED = 607, 'Unwanted'
     REJECTED = 608, 'Rejected'
+
+    # Custome Status Call
+    INVITE_CALL = 102, 'Invite Call'
+    RINGING_ME = 185, 'RINGING_ME'
+    END_CALL = 609, 'End Call'
+    HOLD_CALL = 206, 'Hold Call'
+    ONLINE_HOLD_CALL = 207, 'Online Hold Call'
+    TRANSFER_ACCEPTED = 205, 'Transfer Accepted'
+    TRANSFER_DECLINED = 610, 'Transfer Declined'
 
 
 class SipMessageType(IntEnum):

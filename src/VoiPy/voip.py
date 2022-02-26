@@ -8,8 +8,10 @@ import warnings
 import traceback
 from enum import Enum
 from threading import Lock
-
+from time import sleep
+import wave
 import VoiPy.sip_message
+from VoiPy.types import SipStatus
 
 from . import rtp, sip, helper
 from .types import RTP_Compatible_Codecs
@@ -36,13 +38,24 @@ def handle_exception(exc_type, exc_value, exc_tb):
 class Call_State(Enum):
     DIALING = "DIALING"
     RINGING = "RINGING"
+    RINGING_ME = "RINGING_ME"
     ANSWERED = "ANSWERED"
-    ENDED = "ENDED"
+    ONLINE = "ONLINE"
+    DECLINE = "DECLINE"
+    BUSY = "BUSY"
+    NOT_AVAILABLE = "NOT_AVAILABLE"
+    NOT_FOUND = "NOT_FOUND"
+    END = "END"
+    HOLD = "HOLD"
+    ONLINE_HOLD = "ONLINE_HOLD"
+    TRANSFER_ACCEPTED = "TRANSFER_ACCEPTED"
+    TRANSFER_DECLINE = "TRANSFER_DECLINE"
 
 
 # noinspection PyBroadException
 class Phone:
-    def __init__(self, server_ip, server_port, username, password, call_back, rtp_port_range=(10000, 15000)):
+    def __init__(self, server_ip, server_port, username, password, call_back, voip_status,
+                 rtp_port_range=(10000, 15000)):
         if rtp_port_range[0] > rtp_port_range[1]:
             raise Exception("Invalid RTP Port Range")
 
@@ -55,14 +68,17 @@ class Phone:
         self.server_port = server_port
         self.client_ip = ""
         self.client_port = ""
-        self.request_180: VoiPy.sip_message.SipParseMessage = None
+        self.request_180: dict[str, VoiPy.sip_message.SipParseMessage] = {}
+        self.request: dict[str, VoiPy.sip_message.SipParseMessage] = {}
         self.username = username
         self.password = password
         self.calls = {}
+        self.call_id = None
         self.call_back = call_back
+        self.voip_status = voip_status
 
         self.sip = sip.Sip(username=self.username, password=self.password, server_ip=self.server_ip,
-                           server_port=self.server_port, DnD=False, on_call=self.on_call)
+                           server_port=self.server_port, DnD=False, on_call=self.on_call, sip_status=self.sip_status)
         self.phone_status = "STOP"
 
     def start(self):
@@ -72,28 +88,47 @@ class Phone:
 
             if connect:
                 self.client_ip, self.client_port = connect
+                self.voip_status("ONLINE")
                 return True
+            self.voip_status("OFFLINE")
             return False
         except Exception:
             sys._excepthook = sys.excepthook
             sys.excepthook = handle_exception
             sys.excepthook(*sys.exc_info())
 
-    def stop(self):
+    def stop(self) -> bool:
         try:
             self.phone_status = "STOP"
             for call in self.calls.copy():
-                self.calls[call].hangup()
-            self.sip.stop()
+                if self.calls[call].state == Call_State.ONLINE:
+                    self.calls[call].hangup()
+                elif self.calls[call].state == Call_State.RINGING_ME or \
+                        self.calls[call].state == Call_State.RINGING:
+                    self.calls[call].deny()
+                elif self.calls[call].state == Call_State.DIALING or \
+                        self.calls[call].state == Call_State.END:
+                    self.calls[call].cancel()
+            result = self.sip.stop()
+            return result
         except Exception:
             sys._excepthook = sys.excepthook
             sys.excepthook = handle_exception
             sys.excepthook(*sys.exc_info())
 
-    def on_call(self, request, method):
+    def sip_status(self, status):
+        if not status:
+            self.voip_status("OFFLINE")
+        else:
+            self.voip_status("ONLINE")
+
+    def on_call(self, request):
+        status = None
         if request:
             call_id = request.headers['Call-ID']
-        if method == "INVITE":
+            status = request.status
+            method = request.method
+        if status == SipStatus.INVITE_CALL:
             debug(s=f"call input from {request.headers['From']['number']}"
                     f" and name is {request.headers['From']['caller']}")
 
@@ -103,42 +138,63 @@ class Phone:
                 if proposed not in self.session_ids:
                     self.session_ids.append(proposed)
                     sess_id = proposed
-            self.calls[call_id] = Call(phone=self, call_state=Call_State.RINGING, request=request,
+            self.request[call_id] = request
+            self.calls[call_id] = Call(phone=self, call_state=Call_State.RINGING_ME, request=request,
                                        session_id=sess_id, client_ip=self.client_ip)
-            self.call_back(201, call=self.calls[call_id])
+            # self.call_back(201, call=self.calls[call_id])
+            self.call_back(Call_State.RINGING_ME, call=self.calls, call_id=call_id)
 
-        elif method == "BYE":
+        elif status == SipStatus.END_CALL:
             if call_id not in self.calls:
                 return
-            self.call_back(608, call_id=call_id)
-        elif method == "CANCEL":
-            self.call_back(607, call_id=call_id)
-            # self.calls[call_id].bye()
-        elif method == "486":
-            self.call_back(status_code=486, call_id=call_id)
-        elif method == "404":
-            self.call_back(404, call_id=call_id)
-        elif method == "408":
-            self.call_back(408, call_id=call_id)
-        elif method == "202":
+            # self.call_back(608, call_id=call_id)
+            self.call_back(Call_State.END, call=self.calls, call_id=call_id)
             self.calls[call_id].bye()
-            self.call_back(202, call_id=call_id)
-        elif method == "502":
-            self.call_back(502, call_id=None)
-        elif method == "OK":
+        elif status == SipStatus.DECLINE:
+            self.call_back(Call_State.DECLINE, call=self.calls, call_id=call_id)
+            # self.call_back(607, call_id=call_id)
+            # self.calls[call_id].bye()
+        elif status == SipStatus.HOLD_CALL:
+            self.call_back(Call_State.HOLD, call=self.calls, call_id=call_id)
+        elif status == SipStatus.ONLINE_HOLD_CALL:
+            self.call_back(Call_State.ONLINE_HOLD, call=self.calls, call_id=call_id)
+        elif status == SipStatus.BUSY_HERE:
+            self.call_back(Call_State.BUSY, call=self.calls, call_id=call_id)
+            # self.call_back(status_code=486, call_id=call_id)
+        elif status == SipStatus.NOT_FOUND:
+            self.call_back(Call_State.NOT_FOUND, call=None, call_id=call_id)
+            # self.call_back(404, call_id=call_id)
+        elif status == SipStatus.TEMPORARILY_UNAVAILABLE:
+            self.call_back(Call_State.NOT_AVAILABLE, call=self.calls, call_id=call_id)
+            # self.call_back(408, call_id=call_id)
+        elif status == SipStatus.TRANSFER_ACCEPTED:
+            self.calls[call_id].bye()
+            self.call_back(Call_State.TRANSFER_ACCEPTED, call=self.calls, call_id=call_id)
+            # self.call_back(202, call_id=call_id)
+        elif status == SipStatus.TRANSFER_DECLINED:
+            self.call_back(Call_State.TRANSFER_DECLINE, call=self.calls, call_id=call_id)
+            # self.call_back(502, call_id=None)
+        elif status == SipStatus.OK:
             debug("OK received")
             if call_id not in self.calls:
                 debug("Unknown call")
                 return
 
-            self.call_back(200, call=self.calls[call_id], call_id=call_id)
             self.calls[call_id].answered(request)
+            self.call_back(Call_State.ANSWERED, call=self.calls, call_id=call_id)
             debug("Answered")
-        elif method == "180" or method == "180_1":
-            self.request_180 = request
-            self.call_back(180, call_id=call_id)
-        elif method == "100":
-            self.call_back(100, call_id=call_id)
+        elif status == SipStatus.RINGING:
+            self.request_180[call_id] = request
+            self.call_back(Call_State.RINGING, call=None, call_id=call_id)
+            print("RIIIIIIIING 1", self.call_id, len(self.calls))
+            # if self.call_id != call_id:
+            #     print("RIIIIIIIING 2", self.call_id, len(self.calls))
+            #     for x in self.calls[self.call_id].rtp_clients:
+            #         x.trans(ii=1)
+        elif status == SipStatus.RINGING_ME:
+            self.request_180[call_id] = request
+        elif status == SipStatus.TRYING:
+            self.call_back(Call_State.DIALING, call=None, call_id=call_id)
 
     def call(
             self,
@@ -157,10 +213,13 @@ class Phone:
             if len(result) == 3:
                 return result
             request, call_id, session_id, _ = result
-
+            print("NOWWWWW")
+            if len(self.calls) == 0:
+                self.call_id = call_id
+            self.request[call_id] = request
             self.calls[call_id] = Call(phone=self, call_state=Call_State.DIALING, request=request,
                                        session_id=session_id, client_ip=self.client_ip, medias=medias)
-            self.call_back(status_code=101, call=self.calls[call_id], call_id=call_id)
+            self.call_back(Call_State.RINGING, call=self.calls, call_id=call_id)
             return self.calls[call_id]
 
 
@@ -171,9 +230,10 @@ class Call:
                  request,
                  session_id,
                  client_ip,
-                 rtp_port_range: tuple = (10000, 15000),
+                 rtp_port_range: tuple = (16384, 32767),
                  medias: dict = None):
         self.state = call_state
+
         self.phone = phone
         self.sip = self.phone.sip
         self.request = request
@@ -195,7 +255,7 @@ class Call:
 
         self.assigned_ports = {}
 
-        if call_state == Call_State.RINGING:
+        if call_state == Call_State.RINGING or call_state == Call_State.RINGING_ME:
             audio = []
             video = []
             for x in self.request.body['c']:
@@ -288,6 +348,13 @@ class Call:
             self.dtmf_lock.release()
             self.dtmf.flush()
 
+    def sendDTMF(self, number: str):
+        data = int(number)
+        data = data.to_bytes(1, byteorder='big')
+        print("sendDTMF", data)
+        for x in self.rtp_clients:
+            x.send_DTMF(payload=data)
+
     def getDTMF(self, length=1):
         self.dtmf_lock.acquire()
         packet = self.dtmf.read(length)
@@ -296,6 +363,7 @@ class Call:
 
     def genMs(self):  # For answering originally and for re-negotiations
         m = {}
+
         for x in self.rtp_clients:
             x.start()
             m[x.in_port] = x.assoc
@@ -304,6 +372,7 @@ class Call:
 
     def renegotiate(self, request):
         medias = self.genMs()
+        self.rtp_clients[0].send_rtcp()
         self.sip.answer(request, self.session_id, medias, request.body['a']['transmit_type'])
         for i in request.body['m']:
             for ii, client in zip(range(len(request.body['c'])), self.rtp_clients):
@@ -311,11 +380,14 @@ class Call:
                 client.outPort = i['port'] + ii  # TODO: Check IPv4/IPv6
 
     def answer(self):
-        if self.state != Call_State.RINGING:
+        if self.state != Call_State.RINGING_ME:
             raise Exception("Call is not ringing")
         self.medias = self.genMs()
+        self.rtp_clients[0].send_rtcp()
         self.sip.answer(self.request, self.session_id, self.medias, self.request.body['a']['transmit_type'])
-        self.state = Call_State.ANSWERED
+        self.state = Call_State.ONLINE
+
+        self.phone.call_back(Call_State.ONLINE, call=self.phone.calls, call_id=self.request.headers['Call-ID'])
 
     def answered(self, request):
         if self.state != Call_State.DIALING:
@@ -351,25 +423,97 @@ class Call:
             x.start()
         self.request.headers['Contact'] = request.headers['Contact']
         self.request.headers['To']['tag'] = request.headers['To']['tag']
-        self.state = Call_State.ANSWERED
+        self.state = Call_State.ONLINE
+        self.phone.call_back(Call_State.ONLINE, call=self.phone.calls, call_id=request.headers['Call-ID'])
 
-    def transfer(self, transfer_to):
+    def hold(self, call_id: str, is_hold: bool):
+        if self.state != Call_State.ONLINE:
+            return
         nonce = None
+        transmit_type = rtp.TransmitType.SENDRECV
+        # print("call_to", self.request.headers["From"]["number"])
+        # print("number", self.request.headers["To"]["number"])
         if self.request.authentication:
             nonce = self.request.authentication["nonce"]
-        if int(self.phone.request_180.headers['From']['number']) == self.phone.username:
-            tag_from = self.phone.request_180.headers['From']['tag']
-            tag_to = self.phone.request_180.headers['To']['tag']
+        if str(self.phone.request_180[call_id].headers['From']['number']) == str(self.phone.username):
+            tag_from = self.phone.request_180[call_id].headers['From']['tag']
+            tag_to = self.phone.request_180[call_id].headers['To']['tag']
         else:
-            tag_from = self.phone.request_180.headers['To']['tag']
-            tag_to = self.phone.request_180.headers['From']['tag']
-        result = self.sip.transfer(number=self.request.headers["To"]["number"],
+            tag_from = self.phone.request_180[call_id].headers['To']['tag']
+            tag_to = self.phone.request_180[call_id].headers['From']['tag']
+
+        if not is_hold:
+            transmit_type = rtp.TransmitType.SENDONLY
+        call_to = None
+        if str(self.request.headers["To"]["number"]) == str(self.phone.username):
+            call_to = self.request.headers["From"]["number"]
+        else:
+            call_to = self.request.headers["To"]["number"]
+        result = self.sip.hold(number=self.request.headers["To"]["number"],
+                               call_to=call_to,
+                               medias=self.medias,
+                               send_type=transmit_type,
+                               call_id=self.call_id,
+                               tag_from=tag_from,
+                               nonce=nonce,
+                               is_hold=is_hold,
+                               tag_to=tag_to)
+        self.phone.request[result.headers['Call-ID']].authentication = result.authentication
+        self.request = result
+        if not is_hold:
+            print("is_hold", True)
+            for x in self.rtp_clients:
+                x.hold(True)
+
+        else:
+            print("is_hold", False)
+            for x in self.rtp_clients:
+                x.hold(False)
+        if self.phone.request_180[self.call_id].headers['To']['number'] == '09354063188':
+            print('HOOOK')
+            # self.sip.hook()
+
+    def transfer(self, transfer_to, call_id_replace: str = None):
+        if self.state != Call_State.ONLINE:
+            return
+        nonce = None
+        number: str = ''
+        call_replace = None
+        call = self.phone.request_180[self.call_id]
+        if call_id_replace is not None:
+            call_replace = self.phone.request_180[call_id_replace]
+            if str(call_replace.headers['From']['number']) != str(self.phone.username):
+                call_replace.headers['From']['tag'], call_replace.headers['To']['tag'] = \
+                    call_replace.headers['To']['tag'], call_replace.headers['From']['tag']
+            if self.phone.request[call_id_replace].authentication:
+                nonce = self.phone.request[self.call_id].authentication["nonce"]
+        else:
+            if 'nonce' in self.phone.request[self.call_id].authentication:
+                nonce = self.phone.request[self.call_id].authentication["nonce"]
+        # if int(self.request.headers["To"]["number"]) == self.phone.username:
+        #     number = self.request.headers["From"]["number"]
+        # else:
+        #     number = self.request.headers["To"]["number"]
+        if str(call.headers['From']['number']) == str(self.phone.username):
+            tag_from, tag_to = call.headers['From']['tag'], call.headers['To']['tag']
+            number = call.headers["To"]["number"]
+        else:
+            tag_from, tag_to = call.headers['To']['tag'], call.headers['From']['tag']
+            number = call.headers["From"]["number"]
+
+        self.hold(call_id=self.call_id, is_hold=False)
+        # sleep(2)
+        result = self.sip.transfer(number=number,
+                                   call_replaces=call_replace,
                                    medias=self.medias,
                                    send_type=rtp.TransmitType.SENDRECV,
                                    refer_to=transfer_to, call_id=self.call_id,
                                    tag_from=tag_from,
                                    nonce=nonce,
                                    tag_to=tag_to)
+
+        for x in self.rtp_clients:
+            x.hold(True)
 
     def notFound(self, request):
         if self.state != Call_State.DIALING:
@@ -379,7 +523,7 @@ class Call:
 
         for x in self.rtp_clients:
             x.stop()
-        self.state = Call_State.ENDED
+        self.state = Call_State.END
         del self.phone.calls[self.request.headers['Call-ID']]
         debug("Call not found and terminated")
         warnings.warn(
@@ -396,7 +540,7 @@ class Call:
 
         for x in self.rtp_clients:
             x.stop()
-        self.state = Call_State.ENDED
+        self.state = Call_State.END
         del self.phone.calls[self.request.headers['Call-ID']]
         debug("Call unavailable and terminated")
         warnings.warn(
@@ -407,48 +551,66 @@ class Call:
         # this also resets all other warnings as well.
 
     def deny(self):
-        if self.state != Call_State.RINGING:
+        print("deny", self.state)
+        if self.state != Call_State.RINGING_ME and \
+                self.state != Call_State.RINGING:
             raise Exception("Call is not ringing")
         self.sip.busy(self.request)
         self.rtp_clients = []
-        self.state = Call_State.ENDED
+        self.state = Call_State.END
 
     def hangup(self):
-        if self.state != Call_State.ANSWERED:
+        print("hangup", self.state)
+        if self.state != Call_State.ONLINE:
             raise Exception("Call is not answered")
         for x in self.rtp_clients:
             x.stop()
         self.sip.bye(self.request)
-        self.state = Call_State.ENDED
+        self.state = Call_State.END
         if self.request.headers['Call-ID'] in self.phone.calls:
             del self.phone.calls[self.request.headers['Call-ID']]
 
     def cancel(self):
+        print("cancel", self.state)
         for x in self.rtp_clients:
             x.stop()
         self.sip.cancel(self.request)
-        self.state = Call_State.ENDED
+        self.state = Call_State.END
         if self.request.headers['Call-ID'] in self.phone.calls:
             del self.phone.calls[self.request.headers['Call-ID']]
 
     def bye(self):
-        if self.state == Call_State.ANSWERED:
+        print("bye", self.state)
+        if self.state == Call_State.ONLINE:
             for x in self.rtp_clients:
                 x.stop()
-            self.state = Call_State.ENDED
+            self.state = Call_State.END
         if self.request.headers['Call-ID'] in self.phone.calls:
             del self.phone.calls[self.request.headers['Call-ID']]
+
+    def trans(self):
+        for x in self.rtp_clients:
+            x.first_trans()
+        #     x.hold(True)
+        # sleep(0.01)
+        # for x in self.rtp_clients:
+        #     x.hold(False)
 
     def writeAudio(self, data):
         for x in self.rtp_clients:
             x.write(data)
 
     def readAudio(self, length=160, blocking=True):
-        if len(self.rtp_clients) == 1:
-            self.rtp_clients[0].recording = True
-            return self.rtp_clients[0].read(length, blocking)
+        # print("len(self.rtp_clients)", len(self.rtp_clients))
+        if len(self.rtp_clients) == 0:
+            return b'\xff' * length
+        elif len(self.rtp_clients) == 1:
+            # self.rtp_clients[0].recording = True
+            data = self.rtp_clients[0].read(length, blocking)
+            return data
         data = []
         for x in self.rtp_clients:
+            # x.recording = True
             data.append(x.read(length))
         nd = audioop.add(data.pop(0), data.pop(0), 1)  # Mix audio from different sources before returning
         for d in data:
