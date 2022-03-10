@@ -2,8 +2,7 @@ from time import sleep
 import secrets
 import threading
 from abc import abstractmethod, ABC
-
-from VoiPy.sip_message import SipParseMessage
+from typing import Optional
 
 from . import sip, rtp, helper, sip_message
 from .types import SipMessageType, SipStatus
@@ -328,13 +327,13 @@ class SipInvite(Method):
         self.number: str = ''
         self.medias: dict = {}
         self.send_type: rtp.TransmitType = rtp.TransmitType.SENDRECV
+        self.request: sip_message.SipParseMessage
         self.invite_counter = None
         self.call_id: str = ''
         self.auth_info: dict = {}
         self.branch: str = ''
         self.tag: str = ''
         self.session_id: int = 0
-        self.request: sip_message.SipParseMessage
         self.cseq_id: int = 0
         self._state: int = 0
         self.external_state: int = 0
@@ -369,9 +368,7 @@ class SipInvite(Method):
             self,
             response: sip_message.SipParseMessage
     ) -> None or bool:
-        if response.type == SipMessageType.MESSAGE:
-            pass
-        else:
+        if response.type != SipMessageType.MESSAGE:
             if response.status == SipStatus(400):
                 if self._state == 1 or self._state == 2:
                     debug("username or password incorrect!")
@@ -599,7 +596,7 @@ class SipTransfer(Method):
         self.medias: dict = {}
         self.send_type: rtp.TransmitType = rtp.TransmitType.SENDRECV
         self.refer_counter = None
-        self.call_replaces: optional[SipParseMessage] = None
+        self.call_replaces: Optional[sip_message.SipParseMessage] = None
         self.call_id: str = ''
         self.auth_info: dict = {}
         self.branch: str = ''
@@ -623,7 +620,7 @@ class SipTransfer(Method):
             refer_to: str,
             send_type: rtp.TransmitType,
             # auth_info: dict[str, str] = {},
-            call_replaces: SipParseMessage = None,
+            call_replaces: sip_message.SipParseMessage = None,
             nonce: str = None
     ) -> tuple or bool:
 

@@ -1,3 +1,4 @@
+import time
 from abc import ABC, abstractmethod
 from scapy.all import *
 
@@ -78,11 +79,11 @@ class ConcreteReceive(ObserverPattern, Thread):
         # print("\nsip_receive - receive - run")
         frame = inspect.currentframe()
         loc = inspect.getframeinfo(frame).function
+        
         while self.i_loop:
-            self.socket.setblocking(True)
-
-            ready = select.select([self.socket], [], [], 2)
-            if ready[0]:
+            # time.sleep(0.02)
+            ready_to_read, _, _ = select.select([self.socket], [], [], 2)
+            if ready_to_read:
                 raw_data = self.socket.recv(1024).decode('utf-8')
                 response = SipParseMessage(raw_data)
                 debug(f"<<-----------\n{response.summary()}")

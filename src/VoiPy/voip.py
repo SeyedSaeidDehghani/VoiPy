@@ -8,13 +8,9 @@ import warnings
 import traceback
 from enum import Enum
 from threading import Lock
-from time import sleep
-import wave
-import VoiPy.sip_message
-from VoiPy.types import SipStatus
 
-from . import rtp, sip, helper
-from .types import RTP_Compatible_Codecs
+from . import rtp, sip, helper, sip_message
+from .types import RTP_Compatible_Codecs, SipStatus
 
 __all__ = ("Call_State", "Phone", "Call")
 
@@ -68,8 +64,8 @@ class Phone:
         self.server_port = server_port
         self.client_ip = ""
         self.client_port = ""
-        self.request_180: dict[str, VoiPy.sip_message.SipParseMessage] = {}
-        self.request: dict[str, VoiPy.sip_message.SipParseMessage] = {}
+        self.request_180: dict[str, sip_message.SipParseMessage] = {}
+        self.request: dict[str, sip_message.SipParseMessage] = {}
         self.username = username
         self.password = password
         self.calls = {}
@@ -123,78 +119,77 @@ class Phone:
             self.voip_status("ONLINE")
 
     def on_call(self, request):
-        status = None
         if request:
             call_id = request.headers['Call-ID']
             status = request.status
             method = request.method
-        if status == SipStatus.INVITE_CALL:
-            debug(s=f"call input from {request.headers['From']['number']}"
-                    f" and name is {request.headers['From']['caller']}")
+            if status == SipStatus.INVITE_CALL:
+                debug(s=f"call input from {request.headers['From']['number']}"
+                        f" and name is {request.headers['From']['caller']}")
 
-            sess_id = None
-            while sess_id is None:
-                proposed = random.randint(1, 100000)
-                if proposed not in self.session_ids:
-                    self.session_ids.append(proposed)
-                    sess_id = proposed
-            self.request[call_id] = request
-            self.calls[call_id] = Call(phone=self, call_state=Call_State.RINGING_ME, request=request,
-                                       session_id=sess_id, client_ip=self.client_ip)
-            # self.call_back(201, call=self.calls[call_id])
-            self.call_back(Call_State.RINGING_ME, call=self.calls, call_id=call_id)
+                sess_id = None
+                while sess_id is None:
+                    proposed = random.randint(1, 100000)
+                    if proposed not in self.session_ids:
+                        self.session_ids.append(proposed)
+                        sess_id = proposed
+                self.request[call_id] = request
+                self.calls[call_id] = Call(phone=self, call_state=Call_State.RINGING_ME, request=request,
+                                           session_id=sess_id, client_ip=self.client_ip)
+                # self.call_back(201, call=self.calls[call_id])
+                self.call_back(Call_State.RINGING_ME, call=self.calls, call_id=call_id)
 
-        elif status == SipStatus.END_CALL:
-            if call_id not in self.calls:
-                return
-            # self.call_back(608, call_id=call_id)
-            self.call_back(Call_State.END, call=self.calls, call_id=call_id)
-            self.calls[call_id].bye()
-        elif status == SipStatus.DECLINE:
-            self.call_back(Call_State.DECLINE, call=self.calls, call_id=call_id)
-            # self.call_back(607, call_id=call_id)
-            # self.calls[call_id].bye()
-        elif status == SipStatus.HOLD_CALL:
-            self.call_back(Call_State.HOLD, call=self.calls, call_id=call_id)
-        elif status == SipStatus.ONLINE_HOLD_CALL:
-            self.call_back(Call_State.ONLINE_HOLD, call=self.calls, call_id=call_id)
-        elif status == SipStatus.BUSY_HERE:
-            self.call_back(Call_State.BUSY, call=self.calls, call_id=call_id)
-            # self.call_back(status_code=486, call_id=call_id)
-        elif status == SipStatus.NOT_FOUND:
-            self.call_back(Call_State.NOT_FOUND, call=None, call_id=call_id)
-            # self.call_back(404, call_id=call_id)
-        elif status == SipStatus.TEMPORARILY_UNAVAILABLE:
-            self.call_back(Call_State.NOT_AVAILABLE, call=self.calls, call_id=call_id)
-            # self.call_back(408, call_id=call_id)
-        elif status == SipStatus.TRANSFER_ACCEPTED:
-            self.calls[call_id].bye()
-            self.call_back(Call_State.TRANSFER_ACCEPTED, call=self.calls, call_id=call_id)
-            # self.call_back(202, call_id=call_id)
-        elif status == SipStatus.TRANSFER_DECLINED:
-            self.call_back(Call_State.TRANSFER_DECLINE, call=self.calls, call_id=call_id)
-            # self.call_back(502, call_id=None)
-        elif status == SipStatus.OK:
-            debug("OK received")
-            if call_id not in self.calls:
-                debug("Unknown call")
-                return
+            elif status == SipStatus.END_CALL:
+                if call_id not in self.calls:
+                    return
+                # self.call_back(608, call_id=call_id)
+                self.call_back(Call_State.END, call=self.calls, call_id=call_id)
+                self.calls[call_id].bye()
+            elif status == SipStatus.DECLINE:
+                self.call_back(Call_State.DECLINE, call=self.calls, call_id=call_id)
+                # self.call_back(607, call_id=call_id)
+                # self.calls[call_id].bye()
+            elif status == SipStatus.HOLD_CALL:
+                self.call_back(Call_State.HOLD, call=self.calls, call_id=call_id)
+            elif status == SipStatus.ONLINE_HOLD_CALL:
+                self.call_back(Call_State.ONLINE_HOLD, call=self.calls, call_id=call_id)
+            elif status == SipStatus.BUSY_HERE:
+                self.call_back(Call_State.BUSY, call=self.calls, call_id=call_id)
+                # self.call_back(status_code=486, call_id=call_id)
+            elif status == SipStatus.NOT_FOUND:
+                self.call_back(Call_State.NOT_FOUND, call=None, call_id=call_id)
+                # self.call_back(404, call_id=call_id)
+            elif status == SipStatus.TEMPORARILY_UNAVAILABLE:
+                self.call_back(Call_State.NOT_AVAILABLE, call=self.calls, call_id=call_id)
+                # self.call_back(408, call_id=call_id)
+            elif status == SipStatus.TRANSFER_ACCEPTED:
+                self.calls[call_id].bye()
+                self.call_back(Call_State.TRANSFER_ACCEPTED, call=self.calls, call_id=call_id)
+                # self.call_back(202, call_id=call_id)
+            elif status == SipStatus.TRANSFER_DECLINED:
+                self.call_back(Call_State.TRANSFER_DECLINE, call=self.calls, call_id=call_id)
+                # self.call_back(502, call_id=None)
+            elif status == SipStatus.OK:
+                debug("OK received")
+                if call_id not in self.calls:
+                    debug("Unknown call")
+                    return
 
-            self.calls[call_id].answered(request)
-            self.call_back(Call_State.ANSWERED, call=self.calls, call_id=call_id)
-            debug("Answered")
-        elif status == SipStatus.RINGING:
-            self.request_180[call_id] = request
-            self.call_back(Call_State.RINGING, call=None, call_id=call_id)
-            print("RIIIIIIIING 1", self.call_id, len(self.calls))
-            # if self.call_id != call_id:
-            #     print("RIIIIIIIING 2", self.call_id, len(self.calls))
-            #     for x in self.calls[self.call_id].rtp_clients:
-            #         x.trans(ii=1)
-        elif status == SipStatus.RINGING_ME:
-            self.request_180[call_id] = request
-        elif status == SipStatus.TRYING:
-            self.call_back(Call_State.DIALING, call=None, call_id=call_id)
+                self.calls[call_id].answered(request)
+                self.call_back(Call_State.ANSWERED, call=self.calls, call_id=call_id)
+                debug("Answered")
+            elif status == SipStatus.RINGING:
+                self.request_180[call_id] = request
+                self.call_back(Call_State.RINGING, call=None, call_id=call_id)
+                print("RIIIIIIIING 1", self.call_id, len(self.calls))
+                # if self.call_id != call_id:
+                #     print("RIIIIIIIING 2", self.call_id, len(self.calls))
+                #     for x in self.calls[self.call_id].rtp_clients:
+                #         x.trans(ii=1)
+            elif status == SipStatus.RINGING_ME:
+                self.request_180[call_id] = request
+            elif status == SipStatus.TRYING:
+                self.call_back(Call_State.DIALING, call=None, call_id=call_id)
 
     def call(
             self,
@@ -587,14 +582,6 @@ class Call:
             self.state = Call_State.END
         if self.request.headers['Call-ID'] in self.phone.calls:
             del self.phone.calls[self.request.headers['Call-ID']]
-
-    def trans(self):
-        for x in self.rtp_clients:
-            x.first_trans()
-        #     x.hold(True)
-        # sleep(0.01)
-        # for x in self.rtp_clients:
-        #     x.hold(False)
 
     def writeAudio(self, data):
         for x in self.rtp_clients:

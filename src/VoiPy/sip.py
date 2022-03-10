@@ -25,7 +25,8 @@ class Sip:
         self.DnD = DnD
         self.socket = socket.socket(family=socket.AF_INET,
                                     type=socket.SOCK_DGRAM)
-        self.socket.settimeout(3)
+        self.socket.setblocking(True)
+        # self.socket.settimeout(3)
         self.response_hash = ""
         self.nonce = ""
         self.time_ex = 3600
@@ -236,11 +237,10 @@ class Sip:
     ) -> tuple or bool or int:
         self.invite_method = sip_methods.SipInvite(parent=self)
         self.response.attach(self.invite_method)
-        result = None
         result = self.invite_method.run(number=number, medias=medias, send_type=send_type)
         self.response.detach(self.invite_method)
-        while result is None:
-            pass
+        # while result is None:
+        #     pass
         call_id = None
         invite_auth_info = None
         if isinstance(result, tuple):
@@ -704,8 +704,8 @@ class RequestCreator:
                 if str(medias[x][media]) == "telephone-event":
                     body += f"a=fmtp:{str(media)} 0-15\r\n"
 
-        body += "a=ptime:50\r\n"
-        body += "a=maxptime:150\r\n"
+        body += "a=ptime:20\r\n"
+        body += "a=maxptime:50\r\n"
         body += f"a={send_type}\r\n"
         body += f"a=x-rtp-session-id:{session_id}\r\n"
 

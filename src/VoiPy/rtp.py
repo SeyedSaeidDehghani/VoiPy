@@ -1,13 +1,15 @@
-import io
-import socket
-import random
-import traceback
-from time import sleep
-from . import helper
-from .types import *
 import audioop
+import io
+import random
+import socket
 import threading
-import wave
+
+from scapy.all import select
+
+from . import accurate_delay
+from . import helper
+from .rtp_message import RTPMessage
+from .types import *
 
 __all__ = ("RTPPacketManager", "RTPClient")
 
@@ -28,21 +30,30 @@ class RTPPacketManager:
         self.log = {}
         self.rebuilding = False
 
-    def read(self, length=160):
+    def read(
+            self,
+            length: int = 160
+    ) -> bytes:
         while self.rebuilding:  # This acts functionally as a lock while the buffer is being rebuilt.
+            accurate_delay.delay(0.005)
             print("while_rebuliding")
-            # sleep(0.01)
         self.buffer_lock.acquire()
 
         packet = self.buffer.read(length)
         # print("packet_read1", self.name, packet)
-        if len(packet) < length:
-            packet = packet + (b'\xff' * (length - len(packet)))
+
+        # if len(packet) < length:
+        #     packet = packet + (b'\xff' * (length - len(packet)))
+
         self.buffer_lock.release()
         return packet
 
-    def rebuild(self, reset, offset=0, data=b''):
-        # print("rebuild", self.name, reset, data)
+    def rebuild(
+            self,
+            reset,
+            offset=0,
+            data=b''
+    ) -> None:
 
         self.rebuilding = True
         if reset:
@@ -50,37 +61,37 @@ class RTPPacketManager:
             self.buffer = io.BytesIO(data)
         else:
             buffer_lock = self.buffer.tell()
-            print('buffer_lock', buffer_lock)
             self.buffer = io.BytesIO()
             for pkt in self.log:
                 self.write(pkt, self.log[pkt])
             self.buffer.seek(buffer_lock, 0)
         self.rebuilding = False
 
-    def write(self, offset, data, offset_hold: bool = False):
-        # len_data = len(data)
-        # if self.name == 'in_RTPpacket':
-        # data = self.wr.readframes(320)
-        # offset += len_data
+    def write(
+            self,
+            offset,
+            data,
+            offset_reset: bool = False
+    ) -> None:
+
         self.buffer_lock.acquire()
         self.log[offset] = data
-        # print("write", self.name, data, offset)
+
         current_position = self.buffer.tell()
         if offset < self.offset or self.offset == 4294967296:
             reset = (abs(offset - self.offset) >= 100000)  # If the new timestamp is over 100,000 bytes before the
             # earliest, erase the buffer.  This will stop memory errors.
             self.offset = offset
             self.buffer_lock.release()
-            self.rebuild(reset, offset, data)
+            self.rebuild(reset=reset, offset=offset, data=data)
             # Rebuilds the buffer if something before the earliest timestamp comes in, this will
             # stop overwritting.
             return
 
-        if offset_hold:
-            reset = (abs(offset - self.offset) >= 100000)
+        if offset_reset:
             self.offset = offset
             self.buffer_lock.release()
-            self.rebuild(reset, offset, data)
+            self.rebuild(reset=True, offset=offset, data=data)
         else:
             offset -= self.offset
 
@@ -90,91 +101,17 @@ class RTPPacketManager:
             self.buffer_lock.release()
 
 
-class RTPMessage:
-    def __init__(self, data, assoc):
-        self.RTPCompatibleVersions = RTP_Compatible_Versions
-        self.assoc = assoc
-        self.payload_type: PayloadType = PayloadType.PCMU
-        self.version: int = 0
-        self.cc: int = 0
-        self.sequence: int = 0
-        self.timestamp: int = 0
-        self.SSRC: int = 0
-        self.CSRC: int = 0
-        self.padding: bool = False
-        self.extension: bool = False
-        self.marker: bool = False
-        self.payload: str = ''
-        self.parse(data)
-
-    def summary(self):
-        data = ""
-        data += "Version: " + str(self.version) + "\n"
-        data += "Padding: " + str(self.padding) + "\n"
-        data += "Extension: " + str(self.extension) + "\n"
-        data += "CC: " + str(self.cc) + "\n"
-        data += "Marker: " + str(self.marker) + "\n"
-        data += "Payload Type: " + str(self.payload_type) + " (" + str(self.payload_type.value) + ")" + "\n"
-        data += "Sequence Number: " + str(self.sequence) + "\n"
-        data += "Timestamp: " + str(self.timestamp) + "\n"
-        data += "SSRC: " + str(self.SSRC) + "\n"
-        return data
-
-    def parse(self, packet):
-        byte = helper.byte_to_bits(packet[0:1])
-        self.version = int(byte[0:2], 2)
-        if self.version not in self.RTPCompatibleVersions:
-            raise RTP_Parse_Error("RTP Version {} not compatible.".format(self.version))
-        self.padding = bool(int(byte[2], 2))
-        self.extension = bool(int(byte[3], 2))
-        self.cc = int(byte[4:], 2)
-
-        byte = helper.byte_to_bits(packet[1:2])
-        self.marker = bool(int(byte[0], 2))
-
-        pt = int(byte[1:], 2)
-        if pt in self.assoc:
-            self.payload_type = self.assoc[pt]
-        else:
-            try:
-                self.payload_type = PayloadType(pt)
-                e = False
-            except ValueError:
-                e = True
-            if e:
-                raise RTP_Parse_Error("RTP Payload type {} not found.".format(str(pt)))
-
-        self.sequence = helper.add_bytes(packet[2:4])
-        self.timestamp = helper.add_bytes(packet[4:8])
-        self.SSRC = helper.add_bytes(packet[8:12])
-
-        self.CSRC = []
-
-        i = 12
-        for x in range(self.cc):
-            self.CSRC.append(packet[i:i + 4])
-            i += 4
-
-        if self.extension:
-            pass
-
-        self.payload = packet[i:]
-
-
 class RTPClient:
     def __init__(self, assoc, in_ip, in_port, out_ip, out_port, send_recv, speed_play, dtmf=None):
-        # self.speed_play_PCMA = 61 + speed_play
-        # self.speed_play_PCMU = 80 + speed_play
         self.paket_type = PayloadType.PCMU
         self.packet_is_DTMF: bool = False
         self.payload_DTMF: bytes = None
-        self.NSD_Reciver = True
-        self.NSD_Transfer = True
+        self.RTP_alive: bool = True
         self.is_hold: bool = False
         self.assoc = assoc
-        self.recording = False
         self.socket: socket = None
         debug("Selecting audio codec for transmission")
+
         for m in assoc:
             try:
                 if int(assoc[m]) is not None:
@@ -204,38 +141,178 @@ class RTPClient:
         self.out_timestamp = random.randint(1, 10000)
         self.read_sequence: int = 0
         self.read_packet: RTPMessage = None
-        self.write_packet: RTPMessage = None
         self.hold_offset: bool = False
-        self.w = wave.open('assets/sounds/ATC.wav', 'r')
+        self.lock = threading.Lock()
         self.out_SSRC = random.randint(1000, 65530)
 
     def start(self) -> None:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind((self.in_ip, self.in_port))
         self.socket.setblocking(False)
-        self.first_trans()
-        recv_timer = threading.Timer(0, self.recv)
-        recv_timer.name = "RTP Receiver"
-        recv_timer.start()
-        # trans_timer = threading.Timer(1, self.trans)
-        # trans_timer.name = "RTP Transmitter"
-        # trans_timer.start()
+
+        receive_thread = threading.Thread(target=self.receiver)
+        receive_thread.name = "RTP Receiver"
+        receive_thread.start()
+
+        transfer_timer = threading.Timer(0.2, self.transfer_voice)
+        transfer_timer.name = "RTP Transmitter"
+        transfer_timer.start()
 
     def stop(self) -> None:
-        self.NSD_Reciver = False
         self.is_hold = False
-        self.NSD_Transfer = False
+        self.RTP_alive = False
         self.socket.close()
 
-    def hold(self, is_hold: bool) -> None:
+    def receiver(self) -> None:
+        """The receiver method is used to receive RTP packets
+
+        :return: None
+        """
+        while self.RTP_alive:
+            try:
+                ready_to_read, _, _ = select([self.socket], [], [], 2)
+                if ready_to_read:
+                    packet = self.socket.recv(214)
+                    self.parse_packet(packet)
+                    self.hold_offset = False
+
+            except RTP_Parse_Error as e:
+                debug(s=e, location=None)
+            except OSError:
+                print("OSError recv")
+
+    def __trans_packet_generator(
+            self,
+            type_: int = 0
+    ) -> bytes:
+        """Private method __trans_packet_generator is used to build packets of RTP types
+
+        :param type_: takes a number for RTP type Transfer (default value == 0 => G.711 Normal type,
+                                                            value == 2 => Marker True for first packet,
+                                                            value == 101 => Telephone-Event,
+                                                            value == 126 => DynamicRTP)
+        :type: int
+
+        :return: generated packet
+        :rtype: bytes
+        """
+
+        self.lock.acquire()
+
+        packet = b"\x80"  # RFC 1889 V2 No Padding Extension or CC.
+
+        if type_ == 2:
+            packet += (int(self.preference) + 128).to_bytes(1, byteorder='big')  # RFC 1889 V2 - Marker True.
+        elif type_ == 126:
+            packet += b"\x7e"  # RFC 1889 V2 - Dynamic RTP.
+        elif type_ == 101:
+            packet += b"\x65"  # RFC 1889 V2 - telephone-event (101)
+        else:
+            packet += chr(int(self.preference)).encode('utf-8')  # RFC 1889 V2 - G.711 Normal (0)
+
+        try:
+            packet += self.out_sequence.to_bytes(2, byteorder='big')
+
+        except OverflowError:
+            print("OverflowError 1")
+            self.out_sequence = 0
+
+        try:
+            if type_ == 126:
+                temp = 0
+                packet += temp.to_bytes(4, byteorder='big')
+            else:
+                packet += self.out_timestamp.to_bytes(4, byteorder='big')
+
+        except OverflowError:
+            print("OverflowError 2")
+            self.out_timestamp = 0
+
+        packet += self.out_SSRC.to_bytes(4, byteorder='big')
+
+        if type_ == 126:
+            temp = 0
+            packet += temp.to_bytes(4, byteorder='big')
+
+        if type_ == 101:
+            self.packet_is_DTMF = False
+
+        self.lock.release()
+        return packet
+
+    def transfer_voice(self) -> None:
+        """the transfer_voice is used for Normal RTP-type
+
+        :return: None
+        """
+        self.hold_offset = True
+        self.first_packet()
+        while self.RTP_alive:
+            payload = self.out_RTPpacket.read(length=320)
+            payload = self.encode_packet(payload)
+
+            packet = self.__trans_packet_generator()
+
+            packet += payload
+            try:
+                with accurate_delay.timer_resolution(msecs=0.1):
+                    accurate_delay.min_sleep(0.014)
+                if not self.is_hold:
+                    self.socket.sendto(packet, (self.out_ip, self.out_port))
+                    self.out_sequence += 1
+                self.out_timestamp += 160
+            except OSError:
+                print("trans_normal - rtp OSError 2", payload)
+
+    def transfer_types(
+            self,
+            type_: int = 1
+    ) -> None:
+        """The trans method is used for RTP types other than normal
+
+        :param type_: takes a number for RTP type Transfer (default value == 1 => Marker True for first packet,
+                                                                 value == 101 => Telephone-Event,
+                                                                 value == 126 => DynamicRTP)
+        :type  type_: int
+
+        :returns: None
+        """
+        if type_ == 101:
+            payload = self.payload_DTMF
+        else:
+            payload = self.out_RTPpacket.read(length=320)
+
+        payload = self.encode_packet(payload)
+
+        packet = self.__trans_packet_generator(type_=type_)
+
+        if type_ != 126:
+            packet += payload
+
+        try:
+            if not self.is_hold or type_ == 126:
+                self.socket.sendto(packet, (self.out_ip, self.out_port))
+                self.out_timestamp += 160
+                self.out_sequence += 1
+        except OSError:
+            print("trans_types - rtp OSError", packet)
+
+    def hold(
+            self,
+            is_hold: bool
+    ) -> None:
         if not is_hold and self.read_sequence <= 1:
             self.hold_offset = True
         self.is_hold = is_hold
-        print("Hold is hold", is_hold)
+        # print("Hold is hold", is_hold)
         if self.is_hold:
             self.send_dynamicRTP()
 
-    def read(self, length=160, blocking=True) -> bytes:
+    def read(
+            self,
+            length=160,
+            blocking=True
+    ) -> bytes:
         try:
             if not blocking:
                 if not self.is_hold:
@@ -245,13 +322,9 @@ class RTPClient:
                     return b'\xff' * length
             packet_a = self.in_RTPpacket.read(length)
             if len(packet_a) < len((b'\xff' * length)):
-                if self.NSD_Reciver:
-                    # sleep(0.02)
-                    # print("packet_a", True)
+                if self.RTP_alive:
                     packet_a += (b'\xff' * (length - len(packet_a)))
-            # if not self.is_hold:
-            # print("packet_a2", packet_a)
-            # print("packet_a", len(packet_a))
+
             if self.paket_type == PayloadType.PCMA:
                 data = audioop.alaw2lin(packet_a, 2)
                 data = audioop.bias(data, 2, -128)
@@ -259,30 +332,31 @@ class RTPClient:
                 data = audioop.ulaw2lin(packet_a, 2)
                 data = audioop.bias(data, 2, -128)
             return data
-        # else:
-        #     return b'\xff * length
+
         except Exception as e:
             print("except", e)
 
-    def write(self, data) -> None:
+    def write(
+            self,
+            data: bytes
+    ) -> None:
         self.out_RTPpacket.write(self.out_offset, data)
         self.out_offset += len(data)
 
-    def first_trans(self):
+    def first_packet(self) -> None:
         data = b'\xff' * 1024
         self.out_RTPpacket.write(self.out_offset, data)
         self.out_offset += len(data)
-        self.trans(trans_type=2)
+        self.transfer_types(type_=1)
 
-    def send_dynamicRTP(self):
-        self.trans(trans_type=126)
+    def send_dynamicRTP(self) -> None:
+        self.transfer_types(type_=126)
         if self.is_hold:
-            print("self.is_hold", self.is_hold)
             dynamicRTP = threading.Timer(10, self.send_dynamicRTP)
             dynamicRTP.name = "dynamicRTP"
             dynamicRTP.start()
 
-    def send_rtcp(self):
+    def send_rtcp(self) -> None:
         rr = bytes.fromhex('80c90001')
         rr += self.out_SSRC.to_bytes(4, byteorder='big')
         sd = bytes.fromhex('81ca001e')
@@ -295,97 +369,13 @@ class RTPClient:
 
         # self.read_sequence += 1
 
-    def recv(self) -> None:
-        while self.NSD_Reciver:
-            # print(f"rtp - RTPClient - recv")
-            try:
-                packet = self.socket.recv(214)
-                self.read_sequence += 1
-                self.parse_packet(packet)
-                self.hold_offset = False
-                self.trans()
-
-            except BlockingIOError:
-                pass
-                # sleep((2 / 100))
-                # print("BlockingIOError")
-                # self.trans(ii=3)
-                # self.hold_offset = True
-                # print("BlockingIOError", self.preference.rate)
-                # sleep(0.01)
-            except RTP_Parse_Error as e:
-                debug(s=e, location=None)
-            except OSError:
-                print("OSError recv")
-
-    def send_DTMF(self, payload):
+    def send_DTMF(
+            self,
+            payload: bytes
+    ) -> None:
         self.packet_is_DTMF = True
         self.payload_DTMF = payload
-
-    def trans(self, trans_type=0) -> None:
-        if not self.packet_is_DTMF:
-            payload = self.out_RTPpacket.read(length=320)
-        else:
-            payload = self.payload_DTMF
-        payload = self.encode_packet(payload)
-
-        # print("payload", payload)
-        if self.read_sequence > 0 and trans_type != 3:
-            self.out_timestamp += self.read_sequence * len(payload)
-            self.read_sequence = 0
-        elif trans_type == 3:
-            self.out_timestamp += 160
-
-        # self.out_timestamp += 160
-        # print("payload 2", len(payload))
-        packet = b"\x80"  # RFC 1889 V2 No Padding Extension or CC.
-        if not self.packet_is_DTMF:
-            if trans_type == 2:
-                packet += (int(self.preference) + 128).to_bytes(1, byteorder='big')
-            elif trans_type == 126:
-                packet += b"\x7e"
-            else:
-                packet += chr(int(self.preference)).encode('utf-8')
-        else:
-            packet += b"\x65"  # telephone-event (101)
-        # packet += b"\xff"
-        try:
-            packet += self.out_sequence.to_bytes(2, byteorder='big')
-            # if self.out_sequence == 4:
-            #     print("self.hold_offset = True", "run")
-            #     self.hold_offset = True
-        except OverflowError:
-            print("OverflowError 1")
-            self.out_sequence = 0
-        try:
-            if trans_type != 126:
-                packet += self.out_timestamp.to_bytes(4, byteorder='big')
-            else:
-                temp = 0
-                packet += temp.to_bytes(4, byteorder='big')
-        except OverflowError:
-            print("OverflowError 2")
-            self.out_timestamp = 0
-        packet += self.out_SSRC.to_bytes(4, byteorder='big')
-        if trans_type != 126:
-            packet += payload
-        else:
-            temp = 0
-            packet += temp.to_bytes(4, byteorder='big')
-        self.packet_is_DTMF = False
-
-        try:
-            if not self.is_hold or trans_type >= 2:
-                self.socket.sendto(packet, (self.out_ip, self.out_port))
-            self.write_packet = self.out_timestamp
-        except OSError:
-            print("rtp OSError")
-        if not self.is_hold or trans_type == 126:
-            self.out_sequence += 1
-
-        # speed_play = 150
-        # print(self.preference.rate)
-        # sleep((1 / self.preference.rate))
+        self.transfer_types(type_=101)
 
     def parse_packet(
             self,
@@ -393,12 +383,8 @@ class RTPClient:
     ) -> None:
         packet = RTPMessage(packet, self.assoc)
         if packet.marker and self.read_packet is not None:
-            print("maaaarket")
-            self.out_timestamp += packet.timestamp - self.read_packet.timestamp
+            self.hold_offset = True
         else:
-            if self.read_packet is not None:
-                pass
-                # print("read packet", packet.timestamp - self.read_packet.timestamp)
             self.read_packet = packet
         if packet.payload_type == PayloadType.PCMU:
             self.parse_PCMU(packet)
@@ -423,7 +409,10 @@ class RTPClient:
         else:
             return payload + b"\x8a\x03\x20"
 
-    def parse_PCMU(self, packet) -> None:
+    def parse_PCMU(
+            self,
+            packet: RTPMessage
+    ) -> None:
         self.paket_type = PayloadType.PCMU
         self.in_RTPpacket.write(packet.timestamp, packet.payload, self.hold_offset)
 
@@ -436,19 +425,26 @@ class RTPClient:
         packet = audioop.lin2ulaw(packet, 2)
         return packet
 
-    def parse_PCMA(self, packet) -> None:
+    def parse_PCMA(
+            self,
+            packet: RTPMessage
+    ) -> None:
         self.paket_type = PayloadType.PCMA
-
-        # if self.recording:
         self.in_RTPpacket.write(packet.timestamp, packet.payload, self.hold_offset)
 
-    def encode_PCMA(self, packet):
+    def encode_PCMA(
+            self,
+            packet: bytes
+    ) -> bytes:
         self.paket_type = PayloadType.PCMA
         packet = audioop.bias(packet, 2, -128)
-        packet = audioop.lin2alaw(packet, 2)
+        packet = audioop.alaw2lin(packet, 2)
         return packet
 
-    def parse_telephone_event(self, packet):
+    def parse_telephone_event(
+            self,
+            packet: RTPMessage
+    ) -> None:
         key = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'A', 'B', 'C', 'D']
         end = False
 
