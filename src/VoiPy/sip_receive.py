@@ -1,7 +1,7 @@
-import time
+import inspect
 from abc import ABC, abstractmethod
-from scapy.all import *
-
+import select
+from threading import Thread
 from . import helper
 from .sip_methods import Method
 from .sip_message import SipParseMessage
@@ -84,13 +84,16 @@ class ConcreteReceive(ObserverPattern, Thread):
             # time.sleep(0.02)
             ready_to_read, _, _ = select.select([self.socket], [], [], 2)
             if ready_to_read:
-                raw_data = self.socket.recv(1024).decode('utf-8')
-                response = SipParseMessage(raw_data)
-                debug(f"<<-----------\n{response.summary()}")
-                helper.sip_data_log(data=str(bytes(raw_data, "utf-8")), location=str('Sip -> ' + loc))
-                self.notify(response=response)
-                if response.type == SipMessageType.MESSAGE:
-                    if response.method == "OPTIONS" or response.method == "NOTIFY":
+                try:
+                    raw_data = self.socket.recv(1024).decode('utf-8')
+                    response = SipParseMessage(raw_data)
+                    debug(f"<<-----------\n{response.summary()}")
+                    helper.sip_data_log(data=str(bytes(raw_data, "utf-8")), location=str('Sip -> ' + loc))
+                    self.notify(response=response)
+                    if response.type == SipMessageType.MESSAGE:
+                        if response.method == "OPTIONS" or response.method == "NOTIFY":
+                            self.call_back(response)
+                    if self.phone == "Start":
                         self.call_back(response)
-                if self.phone == "Start":
-                    self.call_back(response)
+                except OSError:
+                    pass

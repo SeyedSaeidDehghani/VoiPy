@@ -1,19 +1,18 @@
 import setuptools
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+with open("README.md", "r", encoding="utf-8") as file:
+    long_description = file.read()
 
 setuptools.setup(
     name='VoiPy',
-    version='1.4.0',
+    version='1.4.2',
     description='Voip package',
     author='Seyed Saeid Dehghani',
     author_email="s.saeid.dehghani@gmail.com",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/SeyedSaeidDehghani/VoiPy",
-    install_requires=["scapy>=2.4.5",
-                      "requests>=2.26.0",
+    install_requires=["requests>=2.26.0",
                       "setuptools>=42",
                       "wheel"],
     license="GNU GPLv3",

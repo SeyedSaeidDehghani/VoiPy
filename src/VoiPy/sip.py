@@ -1,10 +1,12 @@
+import threading
+import time
 import hashlib
-from random import random
+import random
+import traceback
 from threading import Timer
-from time import sleep
-
-from VoiPy.sip_message import SipParseMessage
-from scapy.all import *
+from typing import Optional
+from .sip_message import SipParseMessage
+import socket
 import VoiPy
 from . import sip_template, sip_receive, sip_methods, helper, rtp, sip_message
 from .types import *
@@ -18,8 +20,14 @@ packet_counts = helper.Counter()
 
 # noinspection PyBroadException
 class Sip:
-    def __init__(self, username: str, password: str = None, server_ip: str = "172.20.165.0", server_port: int = 5060,
-                 DnD: bool = False, on_call=None, sip_status=None):
+    def __init__(self,
+                 username: str,
+                 password: str = None,
+                 server_ip: str = "172.20.165.0",
+                 server_port: int = 5060,
+                 DnD: bool = False,
+                 on_call=None,
+                 sip_status=None):
         self.on_call = on_call
         self.sip_status = sip_status
         self.DnD = DnD
@@ -66,6 +74,7 @@ class Sip:
         self.option_counter = 0
 
     def start(self) -> tuple or bool:
+        print("start_in")
         connect = self.connect()
         if connect:
             self.response.name = "RECEIVE"
@@ -80,7 +89,10 @@ class Sip:
                 self.nonce = auth_info["nonce"]
                 debug(s="--Phone Ready.--")
                 self.response.phone = "Start"
+                print("start_out1")
                 return connect
+        print("start_out2")
+        self.sip_status(False)
         return False
 
     def hook(self):
@@ -88,6 +100,7 @@ class Sip:
         self.socket.sendto(data, (self.server_ip, self.server_port))
 
     def stop(self) -> None:
+        print("stop_in")
         if hasattr(self.register_thread, "is_alive"):
             if self.register_thread.is_alive():
                 self.register_thread.cancel()
@@ -100,8 +113,9 @@ class Sip:
         if hasattr(self.receive_thread, "is_alive"):
             if self.receive_thread.is_alive():
                 self.receive_thread.cancel()
-        time.sleep(2)
+
         self.socket.close()
+        print("stop_out")
         return result
 
     def sip_status_timer(self):
@@ -221,6 +235,7 @@ class Sip:
             debug(f"---------->>\n{request.summary()}")
             return True
         except:
+            self.sip_status(False)
             return False
 
     def attach_register(self) -> None:
@@ -314,6 +329,17 @@ class Sip:
         request = self.request_creator.ringing_or_busy(request=request, tag=tag, state=487)
         self.send(request)
         debug("Request Terminated 487!")
+
+    def moved_temporarily_302(
+            self,
+            request: sip_message.SipParseMessage,
+            target_number: str=None
+    ) -> None:
+        print("moved_temporarily_302")
+        tag = self.gen_tag()
+        request = self.request_creator.ringing_or_busy(request=request, tag=tag, target_number=target_number,state=302)
+        self.send(request)
+        debug("Moved Temporarily 302")
 
     def busy(
             self,
@@ -477,7 +503,7 @@ class Sip:
         while i < 20 and invite_auth_info is None:
             if response.headers['Call-ID'] in self.invite_auth_info:
                 invite_auth_info = self.invite_auth_info[response.headers['Call-ID']]
-            sleep(0.2)
+            time.sleep(0.2)
             i += 1
         request = self.request_creator.gen_ack(response=response,
                                                auth_info=invite_auth_info)
@@ -860,6 +886,7 @@ class RequestCreator:
             self,
             tag: str,
             request: sip_message.SipParseMessage,
+            target_number: str = None,
             state: Optional[int] = 180
     ) -> list:
         data = {"#to-tag#": tag,
@@ -879,6 +906,11 @@ class RequestCreator:
             return result
         elif state == 487:
             result = self.fill_request(sip_template.terminated_487, data=data)
+            return result
+        elif state == 302:
+            if target_number is not None:
+                data["#target_number#"] = target_number
+                result = self.fill_request(sip_template.moved_temporarily_302, data=data)
             return result
 
     def fill_request(

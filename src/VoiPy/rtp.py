@@ -3,8 +3,7 @@ import io
 import random
 import socket
 import threading
-
-from scapy.all import select
+import select
 
 from . import accurate_delay
 from . import helper
@@ -36,7 +35,7 @@ class RTPPacketManager:
     ) -> bytes:
         while self.rebuilding:  # This acts functionally as a lock while the buffer is being rebuilt.
             accurate_delay.delay(0.005)
-            print("while_rebuliding")
+            # print("while_rebuliding")
         self.buffer_lock.acquire()
 
         packet = self.buffer.read(length)
@@ -57,6 +56,7 @@ class RTPPacketManager:
 
         self.rebuilding = True
         if reset:
+            # print("RESSSSET")
             self.log = {offset: data}
             self.buffer = io.BytesIO(data)
         else:
@@ -170,7 +170,7 @@ class RTPClient:
         """
         while self.RTP_alive:
             try:
-                ready_to_read, _, _ = select([self.socket], [], [], 2)
+                ready_to_read, _, _ = select.select([self.socket], [], [], 0.2)
                 if ready_to_read:
                     packet = self.socket.recv(214)
                     self.parse_packet(packet)
@@ -350,8 +350,8 @@ class RTPClient:
         self.transfer_types(type_=1)
 
     def send_dynamicRTP(self) -> None:
-        self.transfer_types(type_=126)
-        if self.is_hold:
+        if self.is_hold and self.RTP_alive:
+            self.transfer_types(type_=126)
             dynamicRTP = threading.Timer(10, self.send_dynamicRTP)
             dynamicRTP.name = "dynamicRTP"
             dynamicRTP.start()
@@ -438,7 +438,7 @@ class RTPClient:
     ) -> bytes:
         self.paket_type = PayloadType.PCMA
         packet = audioop.bias(packet, 2, -128)
-        packet = audioop.alaw2lin(packet, 2)
+        packet = audioop.lin2alaw(packet, 2)
         return packet
 
     def parse_telephone_event(

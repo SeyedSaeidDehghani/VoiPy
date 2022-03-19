@@ -204,6 +204,15 @@ answer = ["SIP/2.0 200 OK\r\n",
           "Content-Length: #content_length#\r\n\r\n",
           "#body#"]
 
+moved_temporarily_302 = ["SIP/2.0 302 moved Temporarily\r\n",
+          "Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;\r\n",
+          "Contact: <sip:#target_number#@#client_ip#:#client_port#>\r\n",
+          "To: #to-raw#;tag=#to-tag#\r\n",
+          "From: #from-raw#;tag=#from-tag#\r\n",
+          "Call-ID: #call_id_counter#\r\nCSeq: 102 INVITE\r\n",
+          "User-Agent: VoiPy #user_version#\r\n",
+          "Content-Length: 0\r\n\r\n"]
+
 message = ["MESSAGE sip:#number#@#server_ip# SIP/2.0\r\n",
            "Via: SIP/2.0/UDP #client_ip#:#client_port#;branch=#branch#;rport\r\n",
            "Max-Forwards: 70\r\n",
@@ -331,3 +340,4 @@ options = ["#method# sip:#username#@#server_ip# SIP/2.0\r\n",
            "User-Agent: VoiPy #user_version#\r\n",
            "Content-Length: 0\r\n\r\n"
            ]
+
