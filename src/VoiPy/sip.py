@@ -1,8 +1,6 @@
-import threading
 import time
 import hashlib
 import random
-import traceback
 from threading import Timer
 from typing import Optional
 from .sip_message import SipParseMessage

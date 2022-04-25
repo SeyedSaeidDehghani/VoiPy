@@ -35,14 +35,9 @@ class RTPPacketManager:
     ) -> bytes:
         while self.rebuilding:  # This acts functionally as a lock while the buffer is being rebuilt.
             accurate_delay.delay(0.005)
-            # print("while_rebuliding")
         self.buffer_lock.acquire()
 
         packet = self.buffer.read(length)
-        # print("packet_read1", self.name, packet)
-
-        # if len(packet) < length:
-        #     packet = packet + (b'\xff' * (length - len(packet)))
 
         self.buffer_lock.release()
         return packet
@@ -56,7 +51,6 @@ class RTPPacketManager:
 
         self.rebuilding = True
         if reset:
-            # print("RESSSSET")
             self.log = {offset: data}
             self.buffer = io.BytesIO(data)
         else:
@@ -161,7 +155,8 @@ class RTPClient:
     def stop(self) -> None:
         self.is_hold = False
         self.RTP_alive = False
-        self.socket.close()
+        if self.socket:
+            self.socket.close()
 
     def receiver(self) -> None:
         """The receiver method is used to receive RTP packets
@@ -275,7 +270,7 @@ class RTPClient:
                                                                  value == 126 => DynamicRTP)
         :type  type_: int
 
-        :returns: None
+        :return: None
         """
         if type_ == 101:
             payload = self.payload_DTMF
@@ -301,6 +296,7 @@ class RTPClient:
             self,
             is_hold: bool
     ) -> None:
+
         if not is_hold and self.read_sequence <= 1:
             self.hold_offset = True
         self.is_hold = is_hold

@@ -4,8 +4,8 @@ from . import helper
 from enum import Enum
 import random
 
-
 debug = helper.debug
+
 
 class Call_State(Enum):
     DIALING = "DIALING"
@@ -34,7 +34,7 @@ class Call_Status_Handler:
         self.status: SipStatus = None
         self.request: SipParseMessage = None
         self.calls: dict = {}
-        
+
         self.switch_status = {
             SipStatus.OK: self.__ok,
             SipStatus.INVITE_CALL: self.__invite_call,
@@ -59,7 +59,7 @@ class Call_Status_Handler:
         self.method = request.method
 
         self.calls = self.phone.calls
-        
+
         self.switch_status.get(self.status)()
 
     def __invite_call(self):
@@ -72,11 +72,11 @@ class Call_Status_Handler:
                 self.phone.session_ids.append(proposed)
                 sess_id = proposed
         self.phone.request[self.call_id] = self.request
-        self.phone.incoming_call(request=self.request,sess_id=sess_id)
+        self.phone.incoming_call(request=self.request, sess_id=sess_id)
         self.call_back(Call_State.RINGING_ME, call=self.calls, call_id=self.call_id)
 
     def __end_call(self):
-        if call_id in self.calls:
+        if self.call_id in self.calls:
             self.call_back(Call_State.END, call=self.calls, call_id=self.call_id)
             self.calls[self.call_id].bye()
 

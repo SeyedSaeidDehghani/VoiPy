@@ -9,8 +9,8 @@ import warnings
 import traceback
 from threading import Lock
 
-from . import rtp, sip, helper, sip_message
-from .types import RTP_Compatible_Codecs, SipStatus
+from . import rtp, sip, helper
+from .types import RTP_Compatible_Codecs
 from .sip_message import SipParseMessage
 from .status_handler import Call_Status_Handler, Call_State
 __all__ = ("Call_State", "Phone", "Call")
@@ -41,8 +41,8 @@ class Phone:
 
         self.assigned_ports = []
         self.session_ids = []
-        self.forward_data: dict[str, str] = {}
-        self.should_forward: bool = should_forward
+        self.forward_data: dict[str, str] = forward_data
+        self.should_forward: bool = False if not forward_data["forward_check"] else forward_data["forward_check"]
         self.rtp_port_high = rtp_port_range[1]
         self.rtp_port_low = rtp_port_range[0]
         self.server_ip = server_ip
@@ -64,7 +64,12 @@ class Phone:
 
         self.status_handler = Call_Status_Handler(phone=self)
 
-    def start(self):
+    def start(self) -> bool:
+        """The start method for register phone
+
+        :return: True for register phone completed successfully, otherwise register phone unsuccessful
+        :rtype: bool
+        """
         try:
             self.phone_status = "START"
             connect = self.sip.start()
@@ -79,6 +84,11 @@ class Phone:
             sys.excepthook(*sys.exc_info())
 
     def stop(self) -> bool:
+        """The stop method for deregister phone
+
+        :return: True for deregister phone completed successfully, otherwise deregister phone unsuccessful
+        :rtype: bool
+        """
         try:
             self.phone_status = "STOP"
             for call in self.calls.copy():
@@ -97,30 +107,79 @@ class Phone:
             sys.excepthook = handle_exception
             sys.excepthook(*sys.exc_info())
 
-    def sip_status(self, status):
+    def sip_status(
+            self,
+            status: bool
+    ) -> None:
+        """The sip_status method for status sip callBack
+
+        :param status: if True means sip online status, otherwise sip offline status
+        :type: bool
+
+        :return: None
+        """
         if not status:
             self.voip_status("OFFLINE")
         else:
             self.voip_status("ONLINE")
 
-    def on_call(self, request: SipParseMessage):
+    def on_call(
+            self,
+            request: SipParseMessage
+    ) -> None:
+        """The on_call method for sip requests callBack
+
+        The required requests from the sip class are referred to the voip class by this method
+
+        :param request: required requests from sip class
+        :type: SipParseMessage
+
+        :return: None
+        """
         if request:
             call_id = request.headers['Call-ID']
             self.status_handler.handler(request=request)        
     
-    def incoming_call(self, request: SipParseMessage, sess_id):
+    def incoming_call(
+            self,
+            request: SipParseMessage,
+            sess_id: int
+    ) -> None:
+        """The incoming_call method for incoming calls
+
+        Creates an instance of the Call class for incoming calls and saves it in the calls proprty with the call_id key to access the calls.
+
+        :param request: incoming call request from sip class
+        :type: SipParseMessage
+
+        :param sess_id: session id for incoming call
+        :type: int
+
+        :return: None
+        """
+
         call_id = request.headers['Call-ID']
         self.calls[call_id] = Call(phone=self, call_state=Call_State.RINGING_ME, request=request,
                                    session_id=sess_id, client_ip=self.client_ip)
         if self.should_forward and self.forward_data:
-            timer = int(self.forward_data['time'])
-            a = threading.Timer(timer, self.call_forward, [call_id])
-            a.start()
+            if self.forward_data['forward_timer_check']:
+                timer = int(self.forward_data['forward_timer_value'])
+                print("FORWARD TIMER", timer)
+                a = threading.Timer(timer, self.call_forward, [call_id])
+                a.start()
             
     def call(
             self,
             number: str
     ) -> dict:
+        """
+
+        :param number:
+        :type: str
+
+        :return:
+        
+        """
         port = None
         while port is None:
             temp_port = random.randint(self.rtp_port_low, self.rtp_port_high)
@@ -134,7 +193,6 @@ class Phone:
             if len(result) == 3:
                 return result
             request, call_id, session_id, _ = result
-            print("NOWWWWW")
             if len(self.calls) == 0:
                 self.call_id = call_id
             self.request[call_id] = request
@@ -143,11 +201,13 @@ class Phone:
             self.call_back(Call_State.RINGING, call=self.calls, call_id=call_id)
             return self.calls[call_id]
 
-    def call_forward(self, call_id):
-        if self.calls[call_id].state == Call_State.RINGING_ME:
-            self.sip.moved_temporarily_302(request=self.request[call_id], target_number=self.forward_data['number'])
-            self.calls[call_id].cancel()
-            self.call_back(Call_State.END, call=self.calls, call_id=call_id)
+    def call_forward(self, call_id, force_number: str=''):
+        if call_id in self.calls:
+            if self.calls[call_id].state == Call_State.RINGING_ME:
+                forward_number = force_number if force_number else self.forward_data['forward_number']
+                self.sip.moved_temporarily_302(request=self.request[call_id], target_number=forward_number)
+                self.calls[call_id].cancel()
+                self.call_back(Call_State.END, call=self.calls, call_id=call_id)
 
 
 class Call:
@@ -358,8 +418,7 @@ class Call:
             return
         nonce = None
         transmit_type = rtp.TransmitType.SENDRECV
-        # print("call_to", self.request.headers["From"]["number"])
-        # print("number", self.request.headers["To"]["number"])
+
         if self.request.authentication:
             nonce = self.request.authentication["nonce"]
         if str(self.phone.request_180[call_id].headers['From']['number']) == str(self.phone.username):
@@ -417,10 +476,7 @@ class Call:
         else:
             if 'nonce' in self.phone.request[self.call_id].authentication:
                 nonce = self.phone.request[self.call_id].authentication["nonce"]
-        # if int(self.request.headers["To"]["number"]) == self.phone.username:
-        #     number = self.request.headers["From"]["number"]
-        # else:
-        #     number = self.request.headers["To"]["number"]
+
         if str(call.headers['From']['number']) == str(self.phone.username):
             tag_from, tag_to = call.headers['From']['tag'], call.headers['To']['tag']
             number = call.headers["To"]["number"]
@@ -429,7 +485,7 @@ class Call:
             number = call.headers["From"]["number"]
 
         self.hold(call_id=self.call_id, is_hold=False)
-        # sleep(2)
+
         result = self.sip.transfer(number=number,
                                    call_replaces=call_replace,
                                    medias=self.medias,
@@ -520,16 +576,16 @@ class Call:
             x.write(data)
 
     def readAudio(self, length=160, blocking=True):
-        # print("len(self.rtp_clients)", len(self.rtp_clients))
+
         if len(self.rtp_clients) == 0:
             return b'\xff' * length
         elif len(self.rtp_clients) == 1:
-            # self.rtp_clients[0].recording = True
+
             data = self.rtp_clients[0].read(length, blocking)
             return data
         data = []
         for x in self.rtp_clients:
-            # x.recording = True
+
             data.append(x.read(length))
         nd = audioop.add(data.pop(0), data.pop(0), 1)  # Mix audio from different sources before returning
         for d in data:
