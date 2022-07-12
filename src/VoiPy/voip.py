@@ -13,6 +13,7 @@ from . import rtp, sip, helper
 from .types import RTP_Compatible_Codecs
 from .sip_message import SipParseMessage
 from .status_handler import Call_Status_Handler, Call_State
+
 __all__ = ("Call_State", "Phone", "Call")
 
 debug = helper.debug
@@ -138,8 +139,8 @@ class Phone:
         """
         if request:
             call_id = request.headers['Call-ID']
-            self.status_handler.handler(request=request)        
-    
+            self.status_handler.handler(request=request)
+
     def incoming_call(
             self,
             request: SipParseMessage,
@@ -167,7 +168,7 @@ class Phone:
                 print("FORWARD TIMER", timer)
                 a = threading.Timer(timer, self.call_forward, [call_id])
                 a.start()
-            
+
     def call(
             self,
             number: str
@@ -178,7 +179,7 @@ class Phone:
         :type: str
 
         :return:
-        
+
         """
         port = None
         while port is None:
@@ -201,13 +202,13 @@ class Phone:
             self.call_back(Call_State.RINGING, call=self.calls, call_id=call_id)
             return self.calls[call_id]
 
-    def call_forward(self, call_id, force_number: str=''):
+    def call_forward(self, call_id, force_number: str = ''):
         if call_id in self.calls:
             if self.calls[call_id].state == Call_State.RINGING_ME:
                 forward_number = force_number if force_number else self.forward_data['forward_number']
                 self.sip.moved_temporarily_302(request=self.request[call_id], target_number=forward_number)
-                self.calls[call_id].cancel()
                 self.call_back(Call_State.END, call=self.calls, call_id=call_id)
+                self.calls[call_id].cancel()
 
 
 class Call:
@@ -229,6 +230,8 @@ class Call:
         self.client_ip = client_ip
         self.rtp_port_high = rtp_port_range[1]
         self.rtp_port_low = rtp_port_range[0]
+
+        self.number, self.default_name = helper.get_default_name(self)
 
         self.dtmf_lock = Lock()
         self.dtmf = io.StringIO()
@@ -585,7 +588,6 @@ class Call:
             return data
         data = []
         for x in self.rtp_clients:
-
             data.append(x.read(length))
         nd = audioop.add(data.pop(0), data.pop(0), 1)  # Mix audio from different sources before returning
         for d in data:

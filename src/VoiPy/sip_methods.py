@@ -647,7 +647,6 @@ class SipTransfer(Method):
                 if self._state == 5:
                     self._state = 6
 
-
     def __invite(
             self,
             nonce: str = None
@@ -707,6 +706,7 @@ class SipTransfer(Method):
         self._state = 8
         request = sip_message.SipParseMessage(helper.list_to_string(self.request))
         self.sip.bye(request, cseq_id=self.cseq_id + 1)
+
 
 class SipMessage(Method):
     def __init__(self, parent):

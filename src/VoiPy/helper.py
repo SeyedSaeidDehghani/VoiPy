@@ -186,3 +186,14 @@ def debug(s=None, location: dict = None):
         add_exception_log(e=s, location=location)
     elif DEBUG:
         print("****************************************")
+
+
+def get_default_name(call) -> tuple[str, str]:
+    number: str = str(call.request.headers["From"]["number"])
+    default_name: str = str(call.request.headers["From"]["caller"])
+    if number == str(call.phone.username):
+        number = call.request.header.split('INVITE sip:')[1].split('@')[0]
+        default_name: str = call.request.headers["To"]["caller"]
+    default_name = default_name.strip().strip('"').strip("'")
+
+    return number, default_name

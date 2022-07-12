@@ -477,6 +477,8 @@ class Sip:
     ) -> None:
         debug(s=request.summary())
         tag = self.tag_library[request.headers['Call-ID']]
+        if request.headers['Call-ID'] in self.invite_counter and cseq_id is None:
+            cseq_id = self.invite_counter[request.headers['Call-ID']].next()
         if request.authentication != {}:
             debug(s=self.tag_library)
             debug(s=request.authentication)
