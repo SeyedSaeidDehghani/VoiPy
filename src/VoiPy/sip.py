@@ -1,12 +1,14 @@
+import threading
 import time
 import hashlib
 import random
+import traceback
 from threading import Timer
 from typing import Optional
 from .sip_message import SipParseMessage
 import socket
 import VoiPy
-from . import sip_template, sip_receive, sip_methods, helper, rtp, sip_message
+from . import sip_template, sip_receive, sip_methods, helper, rtp, sip_message, accurate_delay
 from .types import *
 
 __all__ = ["Sip"]
@@ -402,6 +404,7 @@ class Sip:
                 response.status = SipStatus.HOLD_CALL
             else:
                 response.status = SipStatus.ONLINE_HOLD_CALL
+            accurate_delay.delay(0.5)
             self.on_call(response)
             return response
 
@@ -482,6 +485,7 @@ class Sip:
         if request.authentication != {}:
             debug(s=self.tag_library)
             debug(s=request.authentication)
+
             response_hash = self.create_hash(nonce=helper.quote(request.authentication['nonce']),
                                              method="BYE", call_to=request.headers["To"]["number"])
             bye_request = self.request_creator.gen_bye(request=request, tag=tag,
@@ -832,6 +836,7 @@ class RequestCreator:
             result = self.fill_request(sip_template.bye, data=data)
         else:
             data["#nonce#"] = nonce
+            # data["#cseq_id#"] = (int(request.headers['CSeq']['check']) + 1)
             data["#cseq_id#"] = (int(request.headers['CSeq']['check']) + 1)
             data["#response#"] = response
             result = self.fill_request(sip_template.bye_auth, data=data)

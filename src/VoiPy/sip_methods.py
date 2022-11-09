@@ -504,11 +504,16 @@ class SipHold(Method):
                     elif response.body['notify']['code'] == '200':
                         debug('Refer To OK.')
                         self._state = 7
+                        # self.__bye()
         else:
             if response.status == SipStatus(400):
                 if self._state == 1 or self._state == 2:
                     debug("username or password incorrect!")
                     return False
+            # elif response.status == SipStatus(401) and \
+            #         response.headers['CSeq']['check'] == str(self.cseq_id):
+            #     if self._state == 1:
+            #         self.__authorize_invite(response=response)
             elif response.status == SipStatus(100):
                 if self._state == 1:
                     self._state = 3
@@ -524,6 +529,16 @@ class SipHold(Method):
                     self.sip.send(data)
                     if self._state == 3:
                         self._state = 4
+                        # refer_timer = threading.Timer(5, self.__refer)
+                        # refer_timer.name = "refer"
+                        # refer_timer.start()
+            #
+            # elif response.status == SipStatus(202) and response.headers["CSeq"]["method"] == "REFER":
+            #     if self._state == 5:
+            #         self._state = 6
+            # #         self._state = 4
+            # #         self.external_state = 4
+            # #         debug(f"{self.number} is Ringing.")
 
             elif response.status == SipStatus(500) or response.status == SipStatus(503):
                 if self._state == 1 or self._state == 2:
@@ -604,6 +619,7 @@ class SipTransfer(Method):
             tag_from: str,
             refer_to: str,
             send_type: rtp.TransmitType,
+            # auth_info: dict[str, str] = {},
             call_replaces: sip_message.SipParseMessage = None,
             nonce: str = None
     ) -> tuple or bool:
@@ -617,6 +633,7 @@ class SipTransfer(Method):
         self.tag_from = tag_from
         self.send_type = send_type
         self.nonce = nonce
+        # self.auth_info = auth_info
         self.__refer()
         i = 0
         while self._state != 7:
@@ -639,13 +656,52 @@ class SipTransfer(Method):
                     elif response.body['notify']['code'] == '200':
                         debug('Refer To OK.')
                         self._state = 7
+                        # self.__bye()
         else:
             if response.status == SipStatus(400):
+                # if self._state == 1 or self._state == 2:
                 debug("username or password incorrect!")
                 return False
+            # elif response.status == SipStatus(401) and \
+            #         response.headers['CSeq']['check'] == str(self.cseq_id):
+            #     if self._state == 1:
+            #         self.__authorize_invite(response=response)
+            # elif response.status == SipStatus(100):
+            #     if self._state == 1:
+            #         self._state = 3
+            #         debug("Trying...")
+
+            # elif response.status == SipStatus(200) and response.headers["CSeq"]["method"] == "INVITE":
+            #     if self._state == 3 or self._state == 4:
+            #         if self.auth_info:
+            #             data = self.sip.request_creator.gen_ack(response=response, auth_info=self.auth_info)
+            #         else:
+            #             data = self.sip.request_creator.gen_ack(response=response)
+            #         self.sip.send(data)
+            #         if self._state == 3:
+            #             self._state = 4
+            #             refer_timer = threading.Timer(1, self.__refer)
+            #             refer_timer.name = "refer"
+            #             refer_timer.start()
+
             if response.status == SipStatus(202) and response.headers["CSeq"]["method"] == "REFER":
                 if self._state == 5:
                     self._state = 6
+            #         self._state = 4
+            #         self.external_state = 4
+            #         debug(f"{self.number} is Ringing.")
+
+            # elif response.status == SipStatus(500) or response.status == SipStatus(503):
+            #     if self._state == 1 or self._state == 2:
+            #         self._state = 5
+            #         if response.status == SipStatus(503):
+            #             self.sip.ack(response)
+            #         if "Retry-After" in response.headers:
+            #             debug(s=f"Retry-After {str(response.headers['Retry-After'])}")
+            #             sleep(int(response.headers["Retry-After"]) + 1)
+            #         else:
+            #             sleep(5)
+            # self.__invite()
 
     def __invite(
             self,
@@ -687,7 +743,7 @@ class SipTransfer(Method):
                                                  method="REFER", call_to=self.refer_to)
         self.branch = "z9hG4bK" + self.sip.gen_callId()[0:25]
         self.refer_counter = self.sip.invite_counter[self.call_id]
-        self.cseq_id = self.refer_counter.next()
+        self.cseq_id = self.refer_counter.next() + 1
 
         if self.call_replaces is not None:
             call_replace = f"?Replaces={self.call_replaces.headers['Call-ID'].replace('@', '%40')}" \
@@ -706,6 +762,28 @@ class SipTransfer(Method):
         self._state = 8
         request = sip_message.SipParseMessage(helper.list_to_string(self.request))
         self.sip.bye(request, cseq_id=self.cseq_id + 1)
+
+    # def __authorize(
+    #         self,
+    #         response: SipParseMessage
+    # ) -> None:
+    #     self._state = 2
+    #     debug("Authorization...")
+    #     response_hash = self.sip.create_hash(nonce=response.authentication['nonce'],
+    #                                          method=response.headers["CSeq"]["method"], call_to=self.number)
+    #     nonce = VoiPy.quote(response.authentication['nonce'])
+    #     self.auth_info = {"response": response_hash,
+    #                       "nonce": nonce}
+    #     tag = self.sip.gen_tag()
+    #     self.sip.tag_library[self.call_id] = tag
+    #     self.cseq_id = self.refer_counter.next()
+    #     self.request = self.sip.request_creator.gen_invite(number=self.number, cseq_id=self.cseq_id,
+    #                                                        session_id=self.session_id,
+    #                                                        medias=self.medias, send_type=self.send_type,
+    #                                                        branch=self.branch,
+    #                                                        call_id=self.call_id, tag=tag, response=response_hash,
+    #                                                        nonce=nonce)
+    #     self.sip.send(self.request)
 
 
 class SipMessage(Method):

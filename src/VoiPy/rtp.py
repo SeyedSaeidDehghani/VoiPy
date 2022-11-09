@@ -35,9 +35,14 @@ class RTPPacketManager:
     ) -> bytes:
         while self.rebuilding:  # This acts functionally as a lock while the buffer is being rebuilt.
             accurate_delay.delay(0.005)
+            # print("while_rebuliding")
         self.buffer_lock.acquire()
 
         packet = self.buffer.read(length)
+        # print("packet_read1", self.name, packet)
+
+        # if len(packet) < length:
+        #     packet = packet + (b'\xff' * (length - len(packet)))
 
         self.buffer_lock.release()
         return packet
@@ -101,6 +106,8 @@ class RTPClient:
         self.packet_is_DTMF: bool = False
         self.payload_DTMF: bytes = None
         self.RTP_alive: bool = True
+        self.dynamicRTP = threading.Timer(10, self.send_dynamicRTP)
+        self.dynamicRTP.name = "dynamicRTP"
         self.is_hold: bool = False
         self.assoc = assoc
         self.socket: socket = None
@@ -296,12 +303,10 @@ class RTPClient:
             self,
             is_hold: bool
     ) -> None:
-
         if not is_hold and self.read_sequence <= 1:
             self.hold_offset = True
         self.is_hold = is_hold
-        # print("Hold is hold", is_hold)
-        if self.is_hold:
+        if is_hold:
             self.send_dynamicRTP()
 
     def read(
@@ -346,11 +351,13 @@ class RTPClient:
         self.transfer_types(type_=1)
 
     def send_dynamicRTP(self) -> None:
-        if self.is_hold and self.RTP_alive:
+        # TODO
+        print("self.dynamicRTP.is_alive()", self.dynamicRTP.is_alive())
+        if self.is_hold and self.RTP_alive and not self.dynamicRTP.is_alive():
             self.transfer_types(type_=126)
-            dynamicRTP = threading.Timer(10, self.send_dynamicRTP)
-            dynamicRTP.name = "dynamicRTP"
-            dynamicRTP.start()
+            # self.dynamicRTP = threading.Timer(10, self.send_dynamicRTP)
+            # self.dynamicRTP.name = "dynamicRTP"
+            self.dynamicRTP.start()
 
     def send_rtcp(self) -> None:
         rr = bytes.fromhex('80c90001')

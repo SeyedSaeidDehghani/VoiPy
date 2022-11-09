@@ -76,10 +76,12 @@ class ConcreteReceive(ObserverPattern, Thread):
             method.update_response(response=response)
 
     def run(self) -> None:
+        # print("\nsip_receive - receive - run")
         frame = inspect.currentframe()
         loc = inspect.getframeinfo(frame).function
-        
+
         while self.i_loop:
+            # time.sleep(0.02)
             ready_to_read, _, _ = select.select([self.socket], [], [], 2)
             if ready_to_read:
                 try:

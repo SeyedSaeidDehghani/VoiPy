@@ -78,7 +78,9 @@ class Call_Status_Handler:
     def __end_call(self):
         if self.call_id in self.calls:
             self.call_back(Call_State.END, call=self.calls, call_id=self.call_id)
-            self.calls[self.call_id].bye()
+            call = self.calls.get(self.call_id, False)
+            if call:
+                call.bye()
 
     def __decline(self):
         self.call_back(Call_State.DECLINE, call=self.calls, call_id=self.call_id)
@@ -93,7 +95,7 @@ class Call_Status_Handler:
         self.call_back(Call_State.BUSY, call=self.calls, call_id=self.call_id)
 
     def __not_found(self):
-        self.call_back(Call_State.NOT_FOUND, call=None, call_id=self.call_id)
+        self.call_back(Call_State.NOT_FOUND, call=self.calls, call_id=self.call_id)
 
     def __temporarily_unavailable(self):
         self.call_back(Call_State.NOT_AVAILABLE, call=self.calls, call_id=self.call_id)
@@ -114,7 +116,7 @@ class Call_Status_Handler:
 
     def __ringing(self):
         self.phone.request_180[self.call_id] = self.request
-        self.call_back(Call_State.RINGING, call=None, call_id=self.call_id)
+        self.call_back(Call_State.RINGING, call=self.calls, call_id=self.call_id)
 
     def __ringing_me(self):
         self.phone.request_180[self.call_id] = self.request
